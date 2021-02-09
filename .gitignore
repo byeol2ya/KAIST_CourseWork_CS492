@@ -1,0 +1,9 @@
+
+STAR/config.py
+*.xml
+*.iml
+*.obj
+*.egg
+*.txt
+*.pyc
+star.egg-info/PKG-INFO
