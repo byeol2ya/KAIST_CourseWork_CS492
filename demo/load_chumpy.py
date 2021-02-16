@@ -23,6 +23,12 @@ from star.ch.star import STAR
 import chumpy as ch
 import numpy as np
 
+from scipy.stats import truncnorm
+
+def get_truncated_normal(mean=0, sd=1, low=0, upp=10):
+    return truncnorm(
+        (low - mean) / sd, (upp - mean) / sd, loc=mean, scale=sd)
+
 def save_as_obj(model,save_path, name):
     f_str = (model.f + 1).astype('str')
     f_anno = np.full((f_str.shape[0], 1), 'f')
@@ -36,37 +42,74 @@ def save_as_obj(model,save_path, name):
     np.savetxt(save_path + name + ".obj", output, delimiter=" ", fmt="%s")
 
 
-# model = STAR(gender='female',num_betas=10)
-# ## Assign random pose and shape parameters
-# model.pose[:] = np.random.rand(model.pose.size) * .2
-# model.betas[:] = np.random.rand(model.betas.size) * .03
-#
-# for j in range(0,10):
-#     model.betas[:] = 0.0  #Each loop all PC components are set to 0.
-#     for i in np.linspace(-3,3,10): #Varying the jth component +/- 3 standard deviations
-#         model.betas[j] = i
+def extract_obj():
 
-num_pose = 24*3
-num_betas = 10
-# betas = ch.array(np.zeros(num_betas)) #Betas
-# pose = ch.array(np.zeros(num_pose)) #Pose
-pose = ch.array((np.random.rand(num_pose)) - 0.5) * 1
-print(pose)
-# betas = ch.array(
-#             np.array([ 2.25176191, -3.7883464, 0.46747496, 3.89178988,
-#                       2.20098416, 0.26102114, -3.07428093, 0.55708514,
-#                       -3.94442258, -2.88552087])) * .03
-betas = ch.array(
-            np.array([ 1.0, 0.0, 0.0, 0.0,
-                      0.0, 0.0, 0.0, 0.0,
-                      0.0, 0.0]))
+    num_pose = 24 * 3
+    num_betas = 300
+    # model = STAR(gender='female',num_betas=10)
+    # ## Assign random pose and shape parameters
+    # model.pose[:] = np.random.rand(model.pose.size) * .2
+    # model.betas[:] = np.random.rand(model.betas.size) * .03
+    #
+    # for j in range(0,10):
+    #     model.betas[:] = 0.0  #Each loop all PC components are set to 0.
+    #     for i in np.linspace(-3,3,10): #Varying the jth component +/- 3 standard deviations
+    #         model.betas[j] = i
+    ################################################################################################################
+    # betas = ch.array(np.zeros(num_betas)) #Betas
+    # pose = ch.array(np.zeros(num_pose))  # Pose
+    # pose = ch.array((np.random.rand(num_pose)) - 0.5) * 1
+    # print(pose)
+    # betas = ch.array(
+    #             np.array([ 2.25176191, -3.7883464, 0.46747496, 3.89178988,
+    #                       2.20098416, 0.26102114, -3.07428093, 0.55708514,
+    #                       -3.94442258, -2.88552087])) * .03
+    # betas_numpy = np.array([ 4.0, 0.0, 0.0, 0.0,
+    #                      0.0, 0.0, 0.0, 0.0,
+    #                      0.0, 0.0])
 
-# for j in range(0,10):
-#     model.betas[:] = 0.0  #Each loop all PC components are set to 0.
-#     for i in np.linspace(-3,3,10): #Varying the jth component +/- 3 standard deviations
-#         model.betas[j] = i
+    # betas_numpy = np.zeros(num_betas)
+    # for i in range(0,num_betas):
+    #     betas_numpy[i] = i
+    # betas = ch.array(betas_numpy)
 
-model = STAR(gender='female', num_betas=num_betas, pose=pose, betas=betas)
+    # for j in range(0,10):
+    #     model.betas[:] = 0.0  #Each loop all PC components are set to 0.
+    #     for i in np.linspace(-3,3,10): #Varying the jth component +/- 3 standard deviations
+    #         model.betas[j] = i
 
-save_as_obj(model, "./", name="output_2_0")
-# np.savetxt("./output.obj", output, delimiter=" ", fmt="%s")
+    # save_as_obj(model, "./", name="output_2_0")
+    ################################################################################################################
+
+
+def make_data():
+    num_pose = 24 * 3
+    num_betas = 300
+    num_data = 30000
+    pose = ch.array(np.zeros(num_pose))  # Pose
+
+    ret = np.zeros((num_data, 372))
+
+    for i in range(num_data):
+        #if i%100 == 0:
+        print (i)
+        X = get_truncated_normal(mean=0, sd=3, low=-3, upp=3)
+        betas_numpy = X.rvs(num_betas)
+        betas = ch.array(betas_numpy)
+        model = STAR(gender='female', num_betas=num_betas, pose=pose, betas=betas)
+        # [beta0 ... beta n v0_x v0_y v0_z v1_x v1_y v1_z ...]
+        contents = np.hstack((betas_numpy, np.ravel(np.array(model.J_transformed))))
+        ret[i,:] = contents[:]
+        #print(contents[:])
+#https://rfriend.tistory.com/358
+    np.save('./saved.npy', ret)
+
+def main():
+    make_data()
+    # x_save_load = np.load('./saved.npy')
+    # for i in range(0,10):
+    #    print(x_save_load[i,:])
+
+
+if __name__ == "__main__":
+    main()
