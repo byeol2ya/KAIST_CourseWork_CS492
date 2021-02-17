@@ -262,34 +262,36 @@ def main():
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         epoch = checkpoint['epoch']
 
-    best_test_loss = float('inf')
 
-    for e in range(N_EPOCHS):
-        train_loss = train(model,train_iterator,optimizer)
-        test_loss = test(model,test_iterator)
+    else:
+        best_test_loss = float('inf')
 
-        train_loss /= len(train_dataset)
-        test_loss /= len(test_dataset)
+        for e in range(N_EPOCHS):
+            train_loss = train(model,train_iterator,optimizer)
+            test_loss = test(model,test_iterator)
 
-        print(f'Epoch {e}, Train Loss: {train_loss:.2f}, Test Loss: {test_loss:.2f}')
+            train_loss /= len(train_dataset)
+            test_loss /= len(test_dataset)
 
-        if best_test_loss > test_loss:
-            best_test_loss = test_loss
-            patience_counter = 1
-        else:
-            patience_counter += 1
+            print(f'Epoch {e}, Train Loss: {train_loss:.2f}, Test Loss: {test_loss:.2f}')
 
-        if patience_counter > 3:
-            # break
-            pass
-        scheduler.step()
+            if best_test_loss > test_loss:
+                best_test_loss = test_loss
+                patience_counter = 1
+            else:
+                patience_counter += 1
 
-    # https://tutorials.pytorch.kr/beginner/saving_loading_models.html
-    torch.save({
-        'epoch': N_EPOCHS,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-    }, PATH)
+            if patience_counter > 3:
+                # break
+                pass
+            scheduler.step()
+
+        # https://tutorials.pytorch.kr/beginner/saving_loading_models.html
+        torch.save({
+            'epoch': N_EPOCHS,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+        }, PATH)
 
 if __name__ == "__main__":
     main()
