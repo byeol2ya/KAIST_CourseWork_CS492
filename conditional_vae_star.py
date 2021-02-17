@@ -262,7 +262,23 @@ def main():
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         epoch = checkpoint['epoch']
 
-
+        # # create a random latent vector
+        # z = torch.randn(1, LATENT_DIM).to(device)
+        #
+        # # pick randomly 1 class, for which we want to generate the data
+        # y = torch.randint(0, N_CLASSES, (1, 1)).to(dtype=torch.long)
+        # print(f'Generating a {y.item()}')
+        #
+        # y = idx2onehot(y).to(device, dtype=z.dtype)
+        # z = torch.cat((z, y), dim=1)
+        #
+        # reconstructed_img = model.decoder(z)
+        # img = reconstructed_img.view(28, 28).data
+        #
+        # plt.figure()
+        # plt.imshow(img.cpu(), cmap='gray')
+        # plt.show()
+        
     else:
         best_test_loss = float('inf')
 
@@ -295,20 +311,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    # # create a random latent vector
-    # z = torch.randn(1, LATENT_DIM).to(device)
-    #
-    # # pick randomly 1 class, for which we want to generate the data
-    # y = torch.randint(0, N_CLASSES, (1, 1)).to(dtype=torch.long)
-    # print(f'Generating a {y.item()}')
-    #
-    # y = idx2onehot(y).to(device, dtype=z.dtype)
-    # z = torch.cat((z, y), dim=1)
-    #
-    # reconstructed_img = model.decoder(z)
-    # img = reconstructed_img.view(28, 28).data
-    #
-    # plt.figure()
-    # plt.imshow(img.cpu(), cmap='gray')
-    # plt.show()
