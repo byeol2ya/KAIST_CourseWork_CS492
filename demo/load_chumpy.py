@@ -25,6 +25,8 @@ import numpy as np
 
 from scipy.stats import truncnorm
 
+import cal_bone_length as bl
+
 def get_truncated_normal(mean=0, sd=1, low=0, upp=10):
     return truncnorm(
         (low - mean) / sd, (upp - mean) / sd, loc=mean, scale=sd)
@@ -82,30 +84,44 @@ def extract_obj():
     ################################################################################################################
 
 
-def make_data():
+def make_data(base_data=np.zeros(0)):
     num_pose = 24 * 3
-    num_betas = 300
-    num_data = 30000
+    num_additional = 14
+
+    if base_data.size == 0:
+        num_betas = 300
+        num_data = 30000
+    else:
+        num_data, num_betas = base_data.shape
     pose = ch.array(np.zeros(num_pose))  # Pose
 
-    ret = np.zeros((num_data, 372))
+    ret = np.zeros((num_data, num_betas + num_additional))
+
+
 
     for i in range(num_data):
         #if i%100 == 0:
         print (i)
-        X = get_truncated_normal(mean=0, sd=3, low=-3, upp=3)
-        betas_numpy = X.rvs(num_betas)
+        if base_data.size == 0:
+            X = get_truncated_normal(mean=0, sd=3, low=-3, upp=3)
+            betas_numpy = X.rvs(num_betas)
+        else:
+            betas_numpy = base_data[i,:num_betas]
         betas = ch.array(betas_numpy)
         model = STAR(gender='female', num_betas=num_betas, pose=pose, betas=betas)
         # [beta0 ... beta n v0_x v0_y v0_z v1_x v1_y v1_z ...]
-        contents = np.hstack((betas_numpy, np.ravel(np.array(model.J_transformed))))
+
+        pos_vertices_vector = np.ravel(np.array(model.J_transformed))
+        pos_J = bl.cal_bone(pos_vertices_vector)
+        contents = np.hstack((betas_numpy, pos_J))
         ret[i,:] = contents[:]
         #print(contents[:])
 #https://rfriend.tistory.com/358
-    np.save('./saved.npy', ret)
+    np.save('./saved_210217.npy', ret)
 
 def main():
-    make_data()
+    ret_back = np.load('./saved_300betas_base.npy')
+    make_data(ret_back)
     # x_save_load = np.load('./saved.npy')
     # for i in range(0,10):
     #    print(x_save_load[i,:])
