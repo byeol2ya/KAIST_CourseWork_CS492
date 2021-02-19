@@ -7,3 +7,5 @@ STAR/config.py
 *.txt
 *.pyc
 star.egg-info/PKG-INFO
+*.npy
+*.zip
