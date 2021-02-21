@@ -3,7 +3,7 @@ import numpy as np
 max_val = 0
 
 
-def cal_bone(pos_xyz, left_idx_list, right_idx_list, offset=3):
+def cal_bone(pos_xyz, left_idx_list = [0,1,4,7,0,3,6,9,13,16,18,20,9,12], right_idx_list = [1,4,7,10,3,6,9,13,16,18,20,22,12,15], offset=3):
     global max_val
     local_size = len(left_idx_list)
     ret = np.zeros(local_size)
@@ -37,7 +37,7 @@ def main():
     np.save('./saved_bonelength.npy', ret)
 
 def cut():
-    ret = np.load('./saved_bonelength.npy')
+    ret = np.load('./saved_210217.npy')
     np.save('./saved_bonelength_train.npy', ret[:20000,:])
     np.save('./saved_bonelength_test.npy', ret[20000:25000,:])
     np.save('./saved_bonelength_validation.npy', ret[25000:30000,:])
