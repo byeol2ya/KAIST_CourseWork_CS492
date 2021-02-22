@@ -11,6 +11,7 @@ def ith_reset(value=None):
     global betas, num_betas
     num_betas = 300
     create_mesh(0)
+    print('\n' * 80)
     print("reset i^th beta")
 
 
@@ -19,6 +20,8 @@ def reset(value=None):
     num_betas = 300
     betas = np.zeros(num_betas)
     create_mesh(0)
+    #https://teamtreehouse.com/community/clear-screen-for-pycharm-as-if-it-were-on-console-or-cmd
+    print('\n' * 80)
     print("reset all")
     return
 
@@ -37,7 +40,9 @@ def create_mesh(value):
     person = pv.PolyData(v, f)
     mout = person.clean()
     p.add_mesh(mout, name='star', show_edges=True,opacity=0.5)
-    print(betas)
+    print('\n' * 80)
+    with np.printoptions(precision=2, suppress=True):
+        print(betas)
     return
 
 def load_star_obj(gender,betas, num_betas = 300, num_pose = 24 * 3):
