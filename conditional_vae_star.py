@@ -16,7 +16,7 @@ from torchvision import datasets, transforms
 
 import matplotlib.pyplot as plt
 
-from datasets import StarBetaBoneLengthDataset, ToTensor, Normalize
+from demo.datasets import StarBetaBoneLengthDataset, ToTensor, Normalize
 
 tm = time.localtime()
 stm = time.strftime('%Y_%m_%d_%H_%M_%S', tm)
