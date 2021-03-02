@@ -36,6 +36,7 @@ lr = 1e-2               # learning rate
 
 PATH = './resources/cvae_'+stm+'.pt'
 
+
 #https://discuss.pytorch.org/t/pixelwise-weights-for-mseloss/1254/2
 def weighted_mse_loss(input,target,weights):
     out = (input-target)**2
@@ -47,6 +48,7 @@ def weighted_mse_loss(input,target,weights):
     out = out * weights
     loss = torch.sum(out) # or sum over whatever dimensions
     return loss
+
 
 class Encoder(nn.Module):
     ''' This the encoder part of VAE
@@ -222,10 +224,64 @@ def test(model,test_iterator):
     return test_loss
 
 
-def main():
+def load_trained_model(model, optimizer):
+    checkpoint = torch.load(PATH)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    epoch = checkpoint['epoch']
+
+    # # create a random latent vector
+    # z = torch.randn(1, LATENT_DIM).to(device)
+    #
+    # # pick randomly 1 class, for which we want to generate the data
+    # y = torch.randint(0, N_CLASSES, (1, 1)).to(dtype=torch.long)
+    # print(f'Generating a {y.item()}')
+    #
+    # y = idx2onehot(y).to(device, dtype=z.dtype)
+    # z = torch.cat((z, y), dim=1)
+    #
+    # reconstructed_img = model.decoder(z)
+    # img = reconstructed_img.view(28, 28).data
+    #
+    # plt.figure()
+    # plt.imshow(img.cpu(), cmap='gray')
+    # plt.show()
+
+
+def save_trained_model(model, train_dataset, test_dataset, train_iterator, test_iterator, optimizer, scheduler):
+    best_test_loss = float('inf')
+
+    for e in range(N_EPOCHS):
+        train_loss = train(model, train_iterator, optimizer)
+        test_loss = test(model, test_iterator)
+
+        train_loss /= len(train_dataset)
+        test_loss /= len(test_dataset)
+
+        print(f'Epoch {e}, Train Loss: {train_loss:.2f}, Test Loss: {test_loss:.2f}')
+
+        if best_test_loss > test_loss:
+            best_test_loss = test_loss
+            patience_counter = 1
+        else:
+            patience_counter += 1
+
+        if patience_counter > 3:
+            # break
+            pass
+        scheduler.step()
+
+    # https://tutorials.pytorch.kr/beginner/saving_loading_models.html
+    torch.save({
+        'epoch': N_EPOCHS,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+    }, PATH)
+
+
+def setup_trained_model():
     mean = 0.0
     std = 5.0
-
 
     transform = transforms.Compose([
         Normalize(mean=mean, std=std),
@@ -244,70 +300,25 @@ def main():
         length=DATA_SIZE
     )
 
-    # transformed_validation_dataset = StarBetaBoneLengthDataset(
-    #     npy_file='C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/demo/saved_bonelength_validation.npy',
-    #     transform=transform)
+    validation_dataset = StarBetaBoneLengthDataset(
+        npy_file='C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/demo/saved_bonelength_validation.npy',
+        transform=transform)
 
-    train_iterator = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=16)
+    train_iterator = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=16)
     test_iterator = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=16)
+    validation_dataset = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=16)
 
     model = CVAE(INPUT_DIM, HIDDEN_DIM, LATENT_DIM, N_CLASSES).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     #http://www.gisdeveloper.co.kr/?p=8443
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
 
-    if os.path.isfile(PATH):
-        checkpoint = torch.load(PATH)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        epoch = checkpoint['epoch']
+    if not os.path.isfile(PATH):
+        save_trained_model(model, train_dataset, test_dataset, train_iterator, test_iterator, optimizer, scheduler)
+    load_trained_model(model, optimizer)
 
-        # # create a random latent vector
-        # z = torch.randn(1, LATENT_DIM).to(device)
-        #
-        # # pick randomly 1 class, for which we want to generate the data
-        # y = torch.randint(0, N_CLASSES, (1, 1)).to(dtype=torch.long)
-        # print(f'Generating a {y.item()}')
-        #
-        # y = idx2onehot(y).to(device, dtype=z.dtype)
-        # z = torch.cat((z, y), dim=1)
-        #
-        # reconstructed_img = model.decoder(z)
-        # img = reconstructed_img.view(28, 28).data
-        #
-        # plt.figure()
-        # plt.imshow(img.cpu(), cmap='gray')
-        # plt.show()
-        
-    else:
-        best_test_loss = float('inf')
+    return model
 
-        for e in range(N_EPOCHS):
-            train_loss = train(model,train_iterator,optimizer)
-            test_loss = test(model,test_iterator)
-
-            train_loss /= len(train_dataset)
-            test_loss /= len(test_dataset)
-
-            print(f'Epoch {e}, Train Loss: {train_loss:.2f}, Test Loss: {test_loss:.2f}')
-
-            if best_test_loss > test_loss:
-                best_test_loss = test_loss
-                patience_counter = 1
-            else:
-                patience_counter += 1
-
-            if patience_counter > 3:
-                # break
-                pass
-            scheduler.step()
-
-        # https://tutorials.pytorch.kr/beginner/saving_loading_models.html
-        torch.save({
-            'epoch': N_EPOCHS,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-        }, PATH)
 
 if __name__ == "__main__":
-    main()
+    setup_trained_model()

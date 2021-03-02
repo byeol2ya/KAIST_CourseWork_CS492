@@ -3,22 +3,33 @@ import pyvista as pv
 import math
 from star.ch.star import STAR
 import chumpy as ch
+import sys
+import os
+
+#https://brownbears.tistory.com/296
+sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
+import conditional_vae_star as cvs
 
 from scipy.stats import truncnorm
 #https://docs.pyvista.org/examples/03-widgets/slider-bar-widget.html
 
+GUI = pv.Plotter()
+TARGET_INDEX = 0
+NUM_BETAS = None
+BETAS = None
+
 def ith_reset(value=None):
-    global betas, num_betas
-    num_betas = 300
+    global BETAS, NUM_BETAS
+    NUM_BETAS = 300
     create_mesh(0)
     print('\n' * 80)
     print("reset i^th beta")
 
 
 def reset(value=None):
-    global betas, num_betas
-    num_betas = 300
-    betas = np.zeros(num_betas)
+    global BETAS, NUM_BETAS
+    NUM_BETAS = 300
+    BETAS = np.zeros(NUM_BETAS)
     create_mesh(0)
     #https://teamtreehouse.com/community/clear-screen-for-pycharm-as-if-it-were-on-console-or-cmd
     print('\n' * 80)
@@ -26,23 +37,21 @@ def reset(value=None):
     return
 
 def change_beta_idx(value):
-    global target_idx
-    target_idx = value
+    global TARGET_INDEX
+    TARGET_INDEX = value
     return
 
 def create_mesh(value):
-    global betas, num_betas, target_idx, p
+    global BETAS, NUM_BETAS, TARGET_INDEX, GUI
     gender = 'female'
-    betas[math.floor(target_idx)] = value
+    BETAS[math.floor(TARGET_INDEX)] = value
 
-    v, f = load_star_obj(gender=gender, betas=betas, num_betas=num_betas)
+    v, f = load_star_obj(gender=gender, betas=BETAS, num_betas=NUM_BETAS)
 
     person = pv.PolyData(v, f)
     mout = person.clean()
-    p.add_mesh(mout, name='star', show_edges=True,opacity=0.5)
-    print('\n' * 80)
-    with np.printoptions(precision=2, suppress=True):
-        print(betas)
+    GUI.add_mesh(mout, name='star', show_edges=True,opacity=0.5)
+    print(BETAS)
     return
 
 def load_star_obj(gender,betas, num_betas = 300, num_pose = 24 * 3):
@@ -57,15 +66,18 @@ def load_star_obj(gender,betas, num_betas = 300, num_pose = 24 * 3):
     f = np.hstack((f_anno, f))
     return v,f
 
-p = pv.Plotter()
+def cvae_wrapper():
+    cvs.setup_trained_model()
 
-target_idx = 0
-num_betas = None
-betas = None
-reset()
+def main():
+    reset()
 
-p.add_slider_widget(change_beta_idx, [0, 299], title='Beta Index', pointa=(.01, .93), pointb=(.99, .93), value=0)
-p.add_slider_widget(create_mesh, [-100, 100], title='i^th Beta Value', pointa=(.01, .1), pointb=(.99, .1))
-p.add_slider_widget(reset, [0, 0], title='Reset', pointa=(.01, .8), pointb=(.11, .8), value=0)
-p.add_slider_widget(ith_reset, [0, 0], title='i^th B Rst', pointa=(.01, .7), pointb=(.11, .7), value=0)
-p.show(cpos="xy")
+    GUI.add_slider_widget(change_beta_idx, [0, 299], title='Beta Index', pointa=(.01, .93), pointb=(.99, .93), value=0)
+    GUI.add_slider_widget(create_mesh, [-100, 100], title='i^th Beta Value', pointa=(.01, .1), pointb=(.99, .1))
+    GUI.add_slider_widget(reset, [0, 0], title='Reset', pointa=(.01, .8), pointb=(.11, .8), value=0)
+    GUI.add_slider_widget(ith_reset, [0, 0], title='i^th B Rst', pointa=(.01, .7), pointb=(.11, .7), value=0)
+    GUI.show(cpos="xy")
+
+
+if __name__ == "__main__":
+    main()
