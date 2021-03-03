@@ -9,3 +9,5 @@ STAR/config.py
 star.egg-info/PKG-INFO
 *.npy
 *.zip
+wandb/*
+resources/*
