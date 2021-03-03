@@ -25,7 +25,7 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # print(f'device: {device}')
 # BATCH_SIZE = 64         # number of data points in each batch
 BATCH_SIZE = 128         # number of data points in each batch
-N_EPOCHS = 100           # times to run the model on complete data
+N_EPOCHS = 300           # times to run the model on complete data
 # N_EPOCHS = 1000           # times to run the model on complete data
 INPUT_DIM = 300     # size of each input
 HIDDEN_DIM = 256        # hidden dimension
@@ -34,7 +34,7 @@ N_CLASSES = 14          # number of classes in the data
 DATA_SIZE = 30000
 lr = 1e-2               # learning rate
 
-PATH = './resources/cvae_'+stm+'.pt'
+PATH = None
 
 
 #https://discuss.pytorch.org/t/pixelwise-weights-for-mseloss/1254/2
@@ -266,7 +266,7 @@ def save_trained_model(model, train_dataset, test_dataset, train_iterator, test_
         else:
             patience_counter += 1
 
-        if patience_counter > 3:
+        if patience_counter > 10:
             # break
             pass
         scheduler.step()
@@ -279,7 +279,13 @@ def save_trained_model(model, train_dataset, test_dataset, train_iterator, test_
     }, PATH)
 
 
-def setup_trained_model():
+def setup_trained_model(trained_time=None):
+    global PATH
+    if trained_time is None:
+        PATH = './resources/cvae_' + stm + '.pt'
+    else:
+        PATH = './resources/cvae_' + trained_time+ '.pt'
+
     mean = 0.0
     std = 5.0
 
@@ -304,9 +310,9 @@ def setup_trained_model():
         npy_file='C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/demo/saved_bonelength_validation.npy',
         transform=transform)
 
-    train_iterator = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=16)
-    test_iterator = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=16)
-    validation_dataset = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=16)
+    train_iterator = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+    test_iterator = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+    validation_dataset = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
 
     model = CVAE(INPUT_DIM, HIDDEN_DIM, LATENT_DIM, N_CLASSES).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
