@@ -1,5 +1,5 @@
 ''' This code contains the implementation of conditional VAE
-
+https://github.com/graviraja/pytorch-sample-codes/blob/master/conditional_vae.py
 '''
 import os
 import sys
@@ -15,8 +15,9 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
 import matplotlib.pyplot as plt
-
 from demo.datasets import StarBetaBoneLengthDataset, ToTensor, Normalize
+#https://greeksharifa.github.io/references/2020/06/10/wandb-usage/
+import wandb
 
 tm = time.localtime()
 stm = time.strftime('%Y_%m_%d_%H_%M_%S', tm)
@@ -28,8 +29,8 @@ BATCH_SIZE = 128         # number of data points in each batch
 N_EPOCHS = 300           # times to run the model on complete data
 # N_EPOCHS = 1000           # times to run the model on complete data
 INPUT_DIM = 300     # size of each input
-HIDDEN_DIM = 256        # hidden dimension
-LATENT_DIM = 28         # latent vector dimension
+HIDDEN_DIM = 128        # hidden dimension
+LATENT_DIM = 14         # latent vector dimension
 N_CLASSES = 14          # number of classes in the data
 DATA_SIZE = 30000
 lr = 1e-2               # learning rate
@@ -250,6 +251,7 @@ def load_trained_model(model, optimizer):
 
 def save_trained_model(model, train_dataset, test_dataset, train_iterator, test_iterator, optimizer, scheduler):
     best_test_loss = float('inf')
+    example_images = []
 
     for e in range(N_EPOCHS):
         train_loss = train(model, train_iterator, optimizer)
@@ -257,6 +259,12 @@ def save_trained_model(model, train_dataset, test_dataset, train_iterator, test_
 
         train_loss /= len(train_dataset)
         test_loss /= len(test_dataset)
+
+        wandb.log({
+            "Examples": example_images,
+            "Train Loss":train_loss,
+            "Test Loss": test_loss})
+
 
         print(f'Epoch {e}, Train Loss: {train_loss:.2f}, Test Loss: {test_loss:.2f}')
 
@@ -267,8 +275,8 @@ def save_trained_model(model, train_dataset, test_dataset, train_iterator, test_
             patience_counter += 1
 
         if patience_counter > 10:
-            # break
-            pass
+            break
+            #pass
         scheduler.step()
 
     # https://tutorials.pytorch.kr/beginner/saving_loading_models.html
@@ -279,12 +287,19 @@ def save_trained_model(model, train_dataset, test_dataset, train_iterator, test_
     }, PATH)
 
 
+def main():
+    setup_trained_model()
+
+
 def setup_trained_model(trained_time=None):
     global PATH
     if trained_time is None:
         PATH = './resources/cvae_' + stm + '.pt'
     else:
         PATH = './resources/cvae_' + trained_time+ '.pt'
+
+    wandb.init(project="wandb-tutorial")
+    #wandb.config.update()
 
     mean = 0.0
     std = 5.0
@@ -315,9 +330,10 @@ def setup_trained_model(trained_time=None):
     validation_dataset = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
 
     model = CVAE(INPUT_DIM, HIDDEN_DIM, LATENT_DIM, N_CLASSES).to(device)
+    wandb.watch(model)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     #http://www.gisdeveloper.co.kr/?p=8443
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
 
     if not os.path.isfile(PATH):
         save_trained_model(model, train_dataset, test_dataset, train_iterator, test_iterator, optimizer, scheduler)
@@ -327,4 +343,4 @@ def setup_trained_model(trained_time=None):
 
 
 if __name__ == "__main__":
-    setup_trained_model()
+    main()
