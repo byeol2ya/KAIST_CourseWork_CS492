@@ -40,14 +40,10 @@ class Normalize(object):
         return {'beta': beta_val, 'bonelength': bonelength_val}
 
 class StarBetaBoneLengthDataset(Dataset):
-    def __init__(self, npy_file, transform=None, length=None, value=None):
-        if npy_file is not None:
-            self.beta_and_jointposition = np.load(npy_file).astype(np.float32)
-        elif npy_file is None and value is not None:
-            self.beta_and_jointposition = value.astype(np.float32)
-
+    def __init__(self, npy_file, transform=None, length=None):
+        self.beta_and_jointposition = np.load(npy_file).astype(np.float32)
         self.transform = transform
-        if length is None or length < 0 or length > len(self.beta_and_jointposition):
+        if length == None or length < 0 or length > len(self.beta_and_jointposition):
             self.len = len(self.beta_and_jointposition)
         else:
             self.len = length

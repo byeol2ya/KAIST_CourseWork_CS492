@@ -61,7 +61,7 @@ def extract_obj():
     save_as_obj(model, "./", name="output_2_0")
 
 
-def make_data(base_data=np.zeros(0), save_path=None):
+def make_data(base_data=np.zeros(0)):
     num_pose = 24 * 3
     num_additional = 14
 
@@ -94,14 +94,12 @@ def make_data(base_data=np.zeros(0), save_path=None):
         ret[i,:] = contents[:]
         #print(contents[:])
 #https://rfriend.tistory.com/358
-    if save_path is not None:
-        np.save(save_path, ret)
-    return ret
+    np.save('./saved_210217.npy', ret)
 
 def main():
     extract_obj()
     # ret_back = np.load('./saved_300betas_base.npy')
-    # make_data(ret_back, './saved_210217.npy')
+    # make_data(ret_back)
     # x_save_load = np.load('./saved.npy')
     # for i in range(0,10):
     #    print(x_save_load[i,:])
