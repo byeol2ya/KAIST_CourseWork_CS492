@@ -21,6 +21,13 @@ def cal_bone(pos_xyz, left_idx_list = [0,1,4,7,0,3,6,9,13,16,18,20,9,12], right_
             max_val = ret[i]
     return ret
 
+
+def cal_bone_both(pos_xyz,offset=3):
+    left_idx_list = [0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12, 13, 14, 16, 17, 18, 19, 20, 21]
+    right_idx_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+    cal_bone(pos_xyz=pos_xyz,left_idx_list=left_idx_list,right_idx_list=right_idx_list,offset=offset)
+
+
 def main():
     num_data = 30000
     ret = np.zeros((num_data, 314))
