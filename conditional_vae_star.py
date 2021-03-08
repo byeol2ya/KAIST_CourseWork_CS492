@@ -30,7 +30,7 @@ N_EPOCHS = 50           # times to run the model on complete data
 # N_EPOCHS = 1000           # times to run the model on complete data
 INPUT_DIM = 300     # size of each input
 HIDDEN_DIM = 128        # hidden dimension
-LATENT_DIM = 14         # latent vector dimension
+LATENT_DIM = 28         # latent vector dimension
 N_CLASSES = 14          # number of classes in the data
 DATA_SIZE = 30000
 lr = 1e-2               # learning rate
@@ -41,9 +41,9 @@ PATH = None
 #https://discuss.pytorch.org/t/pixelwise-weights-for-mseloss/1254/2
 def weighted_mse_loss(input,target,weights):
     out = (input-target)**2
-    weights = torch.zeros(out.shape, dtype=torch.float32, device=device)
+    weights = torch.ones(out.shape, dtype=torch.float32, device=device)
     for i in range(1, 11):
-        weights[:, i-1] = 1.0 + 1000.0/float(i)
+        weights[:, i-1] += 3.0/float(i)
     # out = out * weights.expand_as(out)
     #print(f'{out.shape}\n{weights.shape}')
     out = out * weights
@@ -65,15 +65,21 @@ class Encoder(nn.Module):
         '''
         super().__init__()
 
-        self.linear = nn.Linear(input_dim + n_classes, hidden_dim)
-        self.mu = nn.Linear(hidden_dim, latent_dim)
-        self.var = nn.Linear(hidden_dim, latent_dim)
+        self.fc1 = nn.Linear(input_dim + n_classes, hidden_dim)
+        self.bn1 = nn.BatchNorm1d(hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim//2)
+        self.bn2 = nn.BatchNorm1d(hidden_dim//2)
+        self.fc3 = nn.Linear(hidden_dim//2, hidden_dim//4)
+        self.bn3 = nn.BatchNorm1d(hidden_dim//4)
+        self.mu = nn.Linear(hidden_dim//4, latent_dim)
+        self.var = nn.Linear(hidden_dim//4, latent_dim)
 
     def forward(self, x):
         # x is of shape [batch_size, input_dim + n_classes]
 
-        # hidden = F.relu(self.linear(x))
-        hidden = self.linear(x)
+        hidden = F.relu(self.bn1(self.fc1(x)))
+        hidden = F.relu(self.bn2(self.fc2(hidden)))
+        hidden = F.relu(self.bn3(self.fc3(hidden)))
         # hidden is of shape [batch_size, hidden_dim]
 
         # latent parameters
@@ -98,18 +104,24 @@ class Decoder(nn.Module):
             n_classes: A integer indicating the number of classes. (dimension of one-hot representation of labels)
         '''
         super().__init__()
-
-        self.latent_to_hidden = nn.Linear(latent_dim + n_classes, hidden_dim)
-        self.hidden_to_out = nn.Linear(hidden_dim, output_dim)
+        self.fc1 = nn.Linear(latent_dim + n_classes, hidden_dim//2)
+        self.bn1 = nn.BatchNorm1d(hidden_dim//2)
+        self.fc2 = nn.Linear(hidden_dim//2, hidden_dim)
+        self.bn2 = nn.BatchNorm1d(hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, output_dim)
+        self.bn3 = nn.BatchNorm1d(output_dim)
+        # self.latent_to_hidden = nn.Linear(latent_dim + n_classes, hidden_dim)
+        # self.hidden_to_out = nn.Linear(hidden_dim, output_dim)
         self.linear = nn.Linear(output_dim, output_dim)
 
     def forward(self, x):
         # x is of shape [batch_size, latent_dim + num_classes]
-        #x = F.relu(self.latent_to_hidden(x))
-        x = self.latent_to_hidden(x)
+        hidden = F.relu(self.bn1(self.fc1(x)))
+        hidden = F.relu(self.bn2(self.fc2(hidden)))
+        generated_x = F.sigmoid(self.fc3(hidden))
+        # output = F.relu(self.fc4(hidden))
         # x is of shape [batch_size, hidden_dim]
-        generated_x = F.sigmoid(self.hidden_to_out(x))
-        generated_x = self.linear(generated_x)
+        # generated_x = self.linear(generated_x)
         # x is of shape [batch_size, output_dim]
 
         return generated_x
@@ -159,7 +171,7 @@ class CVAE(nn.Module):
 
 def calculate_loss(x, reconstructed_x, mean, log_var):
     # reconstruction loss
-    #RCL = F.mse_loss(reconstructed_x, x, size_average=False)
+    # RCL = F.mse_loss(reconstructed_x, x, size_average=False)
     RCL = weighted_mse_loss(reconstructed_x,x,None)
     # RCL = F.binary_cross_entropy(reconstructed_x, x, size_average=False)
     # kl divergence loss
@@ -307,7 +319,7 @@ def save_trained_model(model, train_dataset, test_dataset, train_iterator, test_
             "Test Loss": test_loss})
 
 
-        print(f'Epoch {e}, Train Loss: {train_loss:.2f}, Test Loss: {test_loss:.2f}')
+        print(f'Epoch {e}, Train Loss: {train_loss*1000:.2f}, Test Loss: {test_loss*1000:.2f}')
 
         if best_test_loss > test_loss:
             best_test_loss = test_loss

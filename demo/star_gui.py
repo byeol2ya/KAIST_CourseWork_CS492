@@ -53,7 +53,7 @@ def ith_latentZ_reset(value=None):
 def reset(value=None):
     global Beta, LatentZ
     Beta.cache['num_data'] = cvs.INPUT_DIM
-    Beta.cache['data'] = np.zeros(Beta.cache['num_data']) + 0.5
+    Beta.cache['data'] = np.zeros(Beta.cache['num_data'])
 
     LatentZ.cache['num_data'] = cvs.LATENT_DIM
     LatentZ.cache['data'] = np.zeros(LatentZ.cache['num_data'])
@@ -118,7 +118,8 @@ def cvae_wrapper():
     print('run cave_wrapper')
     #npy_file_path = 'C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/demo/saved_bonelength_validation.npy'
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    model, _, test_iterator, _ = cvs.setup_trained_model(trained_time="2021_03_04_12_57_09")
+    # model, _, test_iterator, _ = cvs.setup_trained_model(trained_time="2021_03_08_08_49_35")
+    model, _, test_iterator, _ = cvs.setup_trained_model()
     # for param in model.parameters():
     #     print(param.cpu().detach().numpy())
     model.eval()
