@@ -52,20 +52,27 @@ def extractor_template(gender, save_path, name):
     save_as_obj(v_tempalate_np, f_np, save_path, local_name)
 
 #https://stackoverflow.com/questions/27786868/python3-numpy-appending-to-a-file-using-numpy-savetxt
-def extractor_weight_and_joint(gender, save_path, name, isWeight = True):
-    file = open(save_path + name + ".txt", 'w+')
+def extractor_weight_and_joint(gender, save_path, name, IsWeight = True, IsSave = True):
+
     model_dict = get_gender_model(gender)
 
-    if isWeight:
+    if IsWeight:
         weights = np.array(ch.array(model_dict['weights'])).astype('float')
-        file.write(f'{weights.shape[1]} {weights.shape[0]} \n')
-        np.savetxt(file, weights, delimiter=" ", fmt="%.9f") # need to check, is it round or round up or round down
+        if IsSave:
+            file = open(save_path + name + ".txt", 'w+')
+            file.write(f'{weights.shape[1]} {weights.shape[0]} \n')
+            np.savetxt(file, weights, delimiter=" ", fmt="%.9f") # need to check, is it round or round up or round down
+            file.close()
+        return weights
     else:
         joints_base_vertex_weight = np.array(ch.array(model_dict['J_regressor'])).astype('float')
-        file.write(f'{joints_base_vertex_weight.shape[0]}\n{joints_base_vertex_weight.shape[1]}\n')
-        np.savetxt(file, joints_base_vertex_weight, delimiter=" ", fmt="%.9f") # need to check, is it round or round up or round down
+        if IsSave:
+            file = open(save_path + name + ".txt", 'w+')
+            file.write(f'{joints_base_vertex_weight.shape[0]}\n{joints_base_vertex_weight.shape[1]}\n')
+            np.savetxt(file, joints_base_vertex_weight, delimiter=" ", fmt="%.9f") # need to check, is it round or round up or round down
+            file.close()
+        return joints_base_vertex_weight
 
-    file.close()
 
 def extractor(gender, save_path, name, type, total=-1, zfillnum = 0):
     model_dict = get_gender_model(gender)
