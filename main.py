@@ -15,46 +15,46 @@ from pymoo.visualization.scatter import Scatter
 #https://pymoo.org/getting_started.html#5.-Optimize
 class MyProblem(Problem):
     NUM_BETA = 300
-    NUM_BONE = 24
+    NUM_BONE = 23
+    NUM_JOINT = 24
 
     def __init__(self):
         super().__init__(n_var=self.NUM_BETA,
                          n_obj=self.NUM_JOINT,
                          n_constr=self.NUM_BETA,
-                         xl=np.ones([self.NUM_BETA])*-3.0,
-                         xu=np.ones([self.NUM_BETA])*3.0,
+                         xl=np.ones([self.NUM_BETA])*-1.0,
+                         xu=np.ones([self.NUM_BETA])*1.0,
                          elementwise_evaluation=True)
 
         self.left_idx_list = [0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12, 13, 14, 16, 17, 18, 19, 20, 21]
         self.right_idx_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
-
-        self.del_joints = np.zeros((300,24,3))
-        self.avg_joints = np.zeros((24,3))
+        self.NUM_OFFSET = 3
+        self.del_joints = np.zeros((self.NUM_BETA,self.NUM_JOINT,self.NUM_OFFSET))
+        self.avg_joints = np.zeros((self.NUM_JOINT,3))
         self.gender = 'female'
         self.preprocessing()
-        self.target_bone_idx = [20-1,21-1]
+        self.target_bone_idx_list = [20-1,21-1]
 
     def _evaluate(self, x, out, *args, **kwargs):
-        local_size = len(self.left_idx_list)
+        local_del_joints = np.zeros((self.NUM_BETA,self.NUM_JOINT,self.NUM_OFFSET))
         offset = 3
         f_list = []
-        for k in range(self.NUM_BONE):
-            f_list += []
-            if k in self.target_bone_idx:
-                for i in range(local_size):
-                    left_idx = self.left_idx_list[i]
-                    right_idx = self.right_idx_list[i]
-                    a = np.array([offset * left_idx:offset * (left_idx + 1)])
-                    b = np.array(pos_xyz[offset * right_idx:offset * (right_idx + 1)])
-                    dist = np.linalg.norm(a - b)
+
+        for beta_idx in range(self.NUM_BETA):
+            local_del_joints[beta_idx,:,:] =self.del_joints[beta_idx,:,:]*x[beta_idx]
+        for bone_idx in range(self.NUM_BONE):
+            local_left_idx = self.left_idx_list[bone_idx]
+            local_right_idx = self.right_idx_list[bone_idx]
+            temp = local_del_joints[:,local_left_idx,:]
+            ttt = np.sum(local_del_joints[:,local_left_idx,:],axis=0)
+
+            local_left_joint = self.avg_joints[local_left_idx,:] + np.sum(local_del_joints[:,local_left_idx,:],axis=0)
+            local_right_joint = self.avg_joints[local_right_idx,:] + np.sum(local_del_joints[:,local_right_idx,:],axis=0)
+
+            if bone_idx not in self.target_bone_idx_list:
+                f_list += [np.absolute(np.linalg.norm(local_left_joint - local_right_joint) - self.bone_length[bone_idx])]
             else:
-                for l in range(self.NUM_BETA):
-                    xs = np.multiply(x,self.del_joints[:,:,0])
-                    xs = np.multiply(xs * xs)
-                    ys = np.multiply(x,self.del_joints[:,:,1])
-                    ys = np.multiply(ys * ys)
-                    zs = np.multiply(x,self.del_joints[:,:,2])
-                    zs = np.multiply(zs * zs)
+                f_list += [(np.linalg.norm(local_left_joint - local_right_joint) - self.bone_length[bone_idx]) * -1]
 
 
         # f1 = x[0] ** 2 + x[1] ** 2
@@ -84,7 +84,9 @@ class MyProblem(Problem):
 
     def get_avg_bone(self):
         model_dict = esd.get_gender_model(self.gender)
-        bone_xyz = np.array(ch.array(model_dict['v_template'])).flatten()
+        v_avg = np.array(ch.array(model_dict['v_template']))
+        self.avg_joints = np.matmul(self.joint_weight, v_avg)
+        bone_xyz = v_avg.flatten()
         self.bone_length = cbl.cal_bone(bone_xyz,left_idx_list=self.left_idx_list,right_idx_list=self.right_idx_list,offset=3) #23
         print("ha")
 
@@ -98,6 +100,7 @@ res = minimize(problem,
                verbose=True,
                seed=1)
 
+print(res.X[-1])
 plot = Scatter()
 plot.add(res.F, color="red")
 plot.show()
