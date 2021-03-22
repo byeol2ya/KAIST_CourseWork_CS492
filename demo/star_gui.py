@@ -118,8 +118,8 @@ def cvae_wrapper():
     print('run cave_wrapper')
     #npy_file_path = 'C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/demo/saved_bonelength_validation.npy'
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    # model, _, test_iterator, _ = cvs.setup_trained_model(trained_time="2021_03_08_08_49_35")
-    model, _, test_iterator, _ = cvs.setup_trained_model()
+    model, _, test_iterator, _ = cvs.setup_trained_model(trained_time="2021_03_08_09_37_28")
+    # model, _, test_iterator, _ = cvs.setup_trained_model()
     # for param in model.parameters():
     #     print(param.cpu().detach().numpy())
     model.eval()
@@ -187,7 +187,8 @@ def create_using_specific_beta8(value):
     LatentZ.cache['data'] = np.zeros(LatentZ.cache['num_data'])
     create_mesh()
 def create_using_specific_beta9(value):
-    Beta.cache['data'][9] = value
+    #Beta.cache['data'][9] = value
+    Beta.cache['data'][:]
     LatentZ.cache['data'] = np.zeros(LatentZ.cache['num_data'])
     create_mesh()
 
