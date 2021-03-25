@@ -44,10 +44,11 @@ class StarData:
         self.num_axis = 3
         self.num_beta = num_beta
 
-        self.deltashape = np.zeros((self.num_vertex, self.num_axis, self.num_beta))
-        self.shape = np.zeros((self.num_vertex, self.num_axis, self.num_beta))
+        #self.deltashape = np.zeros((self.num_vertex, self.num_axis, self.num_beta))
+        #self.shape = np.zeros((self.num_vertex, self.num_axis, self.num_beta))
         self.beta = np.zeros(self.num_beta)
         self.mesh_shape = None
+        self.mesh_shape_pos = None
         self.joint = None
         self.bonelength = None
 
@@ -63,6 +64,8 @@ class DataGenerator:
             self.data = [None] * num_data
             for i in range(num_data):
                 self.data[i] = StarData(num_beta=num_beta)
+                # if i % 50 == 0:
+                #     print(f'build data {i}')
         else:
             self.load_data(data_path)
 
@@ -134,18 +137,18 @@ class DataGenerator:
         local_data = self.data[self.data_idx]
 
         local_cache = np.zeros(self.shapeblendshape.shape)
-        local_data.shape = np.zeros(self.shapeblendshape.shape)
+        #local_data.shape = np.zeros(self.shapeblendshape.shape)
 
         for i in range(local_data.num_beta):
             local_cache[:,:,i] = self.shapeblendshape[:,:,i] * local_data.beta[i]
             #at each shape
-            local_data.shape[:,:,i] = self.template + local_cache[:,:,i]
-        local_data.deltashape = local_cache
+            #local_data.shape[:,:,i] = self.template + local_cache[:,:,i]
+        #local_data.deltashape = local_cache
 
-        local_data.meshshape = np.zeros((local_cache.shape[0],local_cache.shape[1]))
-        for i in range(local_data.num_beta):
-            local_data.meshshape += local_data.deltashape[:,:,i]
-        local_data.meshshape += self.template
+        local_data.mesh_shape = np.zeros((local_cache.shape[0],local_cache.shape[1]))
+        #for i in range(local_data.num_beta):
+            #local_data.mesh_shape += local_data.deltashape[:,:,i]
+        local_data.mesh_shape += self.template
 
     def generate_bone_length(self):
         local_data = self.data[self.data_idx]
@@ -156,6 +159,7 @@ class DataGenerator:
         local_model = STAR(gender=self.gender, num_betas=local_data.num_beta, pose='', betas=ch.array(local_data.beta))
         local_joint = np.array(local_model.J_transformed)
         local_data.joint = local_joint
+        local_data.mesh_shape_pos = np.array(local_model)
 
         local_data.bonelength = self.cal_bonelength_both(np.ravel(local_data.joint))
 
@@ -165,26 +169,71 @@ class DataGenerator:
             self.generate_star()
             self.generate_bone_length()
 
-            if self.data_idx % 50 == 0:
-                print(self.data_idx)
+            # if self.data_idx % 50 == 0:
+            #     print(self.data_idx)
 
-    def save_data(self, save_path):
-        IsAlreadyGeneratedData = (self.data_idx + 1 == self.num_data)
+    # def save_data(self, save_path):
+    #     IsAlreadyGeneratedData = (self.data_idx + 1 == self.num_data)
+    #     if not IsAlreadyGeneratedData:
+    #         self.generate()
+    #
+    #     with open(save_path, 'wb') as output:
+    #         pickle.dump(self.data, output, pickle.HIGHEST_PROTOCOL)
+
+    def save_data_npy(self, save_path):
+        local_data = self.data[self.data_idx]
+        IsAlreadyGeneratedData = (local_data.mesh_shape_pos is not None)
         if not IsAlreadyGeneratedData:
             self.generate()
 
-        with open(save_path, 'wb') as output:
-            pickle.dump(self.data, output, pickle.HIGHEST_PROTOCOL)
+        np.savez_compressed(save_path,
+                 #deltashape=local_data.deltashape,
+                 #shape=local_data.shape,
+                 beta=local_data.beta,
+                 mesh_shape=local_data.mesh_shape,
+                 mesh_shape_pos=local_data.mesh_shape_pos,
+                 joint=local_data.joint,
+                 bonelength=local_data.bonelength)
 
-    def load_data(self, load_path):
-        with open(load_path, 'rb') as input:
-            self.data = pickle.load(input)
+    # def load_data(self, load_path):
+    #     with open(load_path, 'rb') as input:
+    #         self.data = pickle.load(input)
+
+    #https://jangjy.tistory.com/330
+    #TODO: Make more than adding just one data
+    def load_data_npy(self, load_path):
+        local_data = self.data[self.data_idx]
+        saved_npz = np.load(load_path, allow_pickle=True)
+
+        #local_data.deltashape = saved_npz['deltashape']
+        #local_data.shape = saved_npz['shape']
+        local_data.beta = saved_npz['beta']
+        local_data.mesh_shape = saved_npz['mesh_shape']
+        local_data.mesh_shape_pos = saved_npz['mesh_shape_pos']
+        local_data.joint = saved_npz['joint']
+        local_data.bonelength = saved_npz['bonelength']
+
+        saved_npz.close()
+
 
 
 
 if __name__ == "__main__":
-    save_path = '../data/final_data.pkl'
-
-    theStarData = DataGenerator(gender='female', num_data=10)
-    theStarData.save_data(save_path)
-    print('finish')
+    for i in range(131072):
+        save_path = '../data/final_data_'+str(i)+'.npz'
+        #print(save_path)
+        np.random.seed(i)
+        theStarData = DataGenerator(gender='female', num_data=1)
+        theStarData.save_data_npy(save_path)
+        #print('finish')
+    #
+    # save_path = '../data/final_data_3.npz'
+    # print(save_path)
+    # test0 = DataGenerator(gender='female', num_data=1)
+    # test0.load_data_npy(save_path)
+    #
+    # save_path = '../data/final_data_2.npz'
+    # print(save_path)
+    # test1 = DataGenerator(gender='female', num_data=1)
+    # test1.load_data_npy(save_path)
+    # print('hh')
