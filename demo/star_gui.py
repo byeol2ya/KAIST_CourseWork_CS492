@@ -8,11 +8,10 @@ import os
 
 #https://brownbears.tistory.com/296
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
-import conditional_vae_star as cvs
+from model import conditional_vae_star_v1 as cvs
 import torch
 import load_chumpy as lc
 
-from scipy.stats import truncnorm
 #https://docs.pyvista.org/examples/03-widgets/slider-bar-widget.html
 
 LEFT = 0

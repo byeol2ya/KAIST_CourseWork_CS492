@@ -25,7 +25,7 @@ import numpy as np
 
 from scipy.stats import truncnorm
 
-import cal_bone_length as bl
+import demo.cal_bone_length as bl
 
 def get_truncated_normal(mean=0, sd=1, low=0, upp=10):
     return truncnorm(
@@ -44,13 +44,14 @@ def save_as_obj(model,save_path, name):
     np.savetxt(save_path + name + ".obj", output, delimiter=" ", fmt="%s")
 
 
-def extract_obj():
+def extract_obj(save_path="./", name="output_2_0", betas=None):
 
     num_pose = 24 * 3
     num_betas = 300
-    betas = ch.array(np.zeros(num_betas))
     pose = ch.array(np.zeros(num_pose))
-    betas = ch.array(np.array([2.94163568, 2.85407828, 2.52987061, -2.59662729, 1.83441506, 1.65966511
+
+    if betas is None:
+        betas = np.array([2.94163568, 2.85407828, 2.52987061, -2.59662729, 1.83441506, 1.65966511
                                   , 2.72223292, -1.83326521, 2.11696906, 0.72201226, -1.84460786, -2.28110441
                                   , -1.07074934, -1.87749175, -0.05032597, -2.02162087, 1.4204214, 2.81279795
                                   , -2.40832403, 1.53100512, -0.94323054, -2.78516985, -0.79193469, -2.09757654
@@ -99,7 +100,9 @@ def extract_obj():
                                   , -2.02523996, -0.42688674, -2.06254038, -2.60064264, 1.57854412, -0.77841438
                                   , 0.00710317, 2.5357915, -1.81310826, -0.04550116, -2.77099049, 0.03428283
                                   , 2.72707113, -0.8630354, -0.5840501, -1.9047515, 0.15966643, -2.29604338
-                                  , 1.63157778, -0.06425265, 1.68518473, -2.460373, 2.91278618, 2.98347568]))
+                                  , 1.63157778, -0.06425265, 1.68518473, -2.460373, 2.91278618, 2.98347568])
+    betas = ch.array(betas)
+
     model = STAR(gender='female',num_betas=num_betas, pose=pose,betas=betas)
     # ## Assign random pose and shape parameters
     # for j in range(0,10):
@@ -162,7 +165,7 @@ def extract_obj():
     """
     # model.pose = ch.array(np.zeros(num_pose))  # Pose
 
-    save_as_obj(model, "./", name="output_2_0")
+    save_as_obj(model, save_path=save_path, name=name)
 
 
 def make_data(base_data=np.zeros(0), save_path=None):

@@ -18,12 +18,12 @@ class MyProblem(Problem):
     NUM_BONE = 23
     NUM_JOINT = 24
 
-    def __init__(self):
+    def __init__(self, target_bone_idx_list= [20-1,21-1]):
         super().__init__(n_var=self.NUM_BETA,
                          n_obj=self.NUM_JOINT,
                          n_constr=self.NUM_BETA,
-                         xl=np.ones([self.NUM_BETA])*-1.0,
-                         xu=np.ones([self.NUM_BETA])*1.0,
+                         xl=np.ones([self.NUM_BETA])*-5.0,
+                         xu=np.ones([self.NUM_BETA])*5.0,
                          elementwise_evaluation=True)
 
         self.left_idx_list = [0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12, 13, 14, 16, 17, 18, 19, 20, 21]
@@ -33,7 +33,8 @@ class MyProblem(Problem):
         self.avg_joints = np.zeros((self.NUM_JOINT,3))
         self.gender = 'female'
         self.preprocessing()
-        self.target_bone_idx_list = [20-1,21-1]
+        # self.target_bone_idx_list = [20-1,21-1]
+        self.target_bone_idx_list = target_bone_idx_list
 
     def _evaluate(self, x, out, *args, **kwargs):
         local_del_joints = np.zeros((self.NUM_BETA,self.NUM_JOINT,self.NUM_OFFSET))
@@ -52,9 +53,11 @@ class MyProblem(Problem):
             local_right_joint = self.avg_joints[local_right_idx,:] + np.sum(local_del_joints[:,local_right_idx,:],axis=0)
 
             if bone_idx not in self.target_bone_idx_list:
-                f_list += [np.absolute(np.linalg.norm(local_left_joint - local_right_joint) - self.bone_length[bone_idx])]
+                pass
+                # f_list += [np.absolute(np.linalg.norm(local_left_joint - local_right_joint) - self.bone_length[bone_idx])]
             else:
-                f_list += [(np.linalg.norm(local_left_joint - local_right_joint) - self.bone_length[bone_idx]) * -1]
+                # f_list += [(np.linalg.norm(local_left_joint - local_right_joint) - self.bone_length[bone_idx]) * -1]
+                f_list += [np.linalg.norm(local_left_joint - local_right_joint) * -1]
 
 
         # f1 = x[0] ** 2 + x[1] ** 2
@@ -90,17 +93,24 @@ class MyProblem(Problem):
         self.bone_length = cbl.cal_bone(bone_xyz,left_idx_list=self.left_idx_list,right_idx_list=self.right_idx_list,offset=3) #23
         print("ha")
 
-problem = MyProblem()
+F ={}
 
-algorithm = NSGA2(pop_size=100)
+for i in range(0,23):
+    problem = MyProblem(target_bone_idx_list=[i])
+    print(f'{i} start')
 
-res = minimize(problem,
-               algorithm,
-               ("n_gen", 100),
-               verbose=True,
-               seed=1)
+    algorithm = NSGA2(pop_size=100)
 
-print(res.X[-1])
-plot = Scatter()
-plot.add(res.F, color="red")
-plot.show()
+    res = minimize(problem,
+                   algorithm,
+                   ("n_gen", 100),
+                   verbose=True,
+                   seed=1)
+    F[i] = res.F[-1]
+    #print(res.X[-1])
+    # plot = Scatter()
+    # plot.add(res.F, color="red")
+    # plot.show()
+
+for key in F:
+    print(f'{key}: {F[key]}')

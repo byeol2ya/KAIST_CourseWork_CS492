@@ -37,6 +37,42 @@ def euclidean_distance(cache, first_idx, second_idx, cache_offset=3):
 
     return dist
 
+def load_data_npy(load_path, IsNeedDefault):
+    saved_npz = np.load(load_path, allow_pickle=True)
+    local_data = {}
+
+    if IsNeedDefault:
+        #local_data.deltashape = saved_npz['deltashape']
+        #local_data.shape = saved_npz['shape']
+        local_data['beta'] = saved_npz['beta']
+        local_data['mesh_shape'] = saved_npz['mesh_shape']
+        local_data['mesh_shape_pos'] = saved_npz['mesh_shape_pos']
+        local_data['joint'] = saved_npz['joint']
+        local_data['bonelength'] = saved_npz['bonelength']
+    else:
+        local_data['beta'] = saved_npz['beta']
+        local_data['joint'] = saved_npz['joint']
+        local_data['bonelength'] = saved_npz['bonelength']
+
+    saved_npz.close()
+
+    return local_data
+
+def save_data_npy(save_path, local_data, IsNeedDefault):
+    if IsNeedDefault:
+        np.savez_compressed(save_path,
+                 beta=local_data['beta'],
+                 mesh_shape=local_data['mesh_shape'],
+                 mesh_shape_pos=local_data['mesh_shape_pos'],
+                 joint=local_data['joint'],
+                 bonelength=local_data['bonelength'])
+    else:
+        np.savez_compressed(save_path,
+                 beta=local_data['beta'],
+                 joint=local_data['joint'],
+                 bonelength=local_data['bonelength'])
+
+
 #TODO: how to add avg -> use at beginning
 class StarData:
     def __init__(self, num_beta):
@@ -53,25 +89,38 @@ class StarData:
         self.bonelength = None
 
 class DataGenerator:
-    def __init__(self, gender, data_path=None, beta=None, num_data=10000, num_beta=300):
+    def __init__(self, gender, data_path=None, beta=None, num_data=10000, num_beta=300, STATUS=0):
+        """
+
+        Note:
+
+
+        Args:
+            STATUS (int): 0 is default, 1 for simple data, 2 for save constant
+
+        """
         self.gender = gender
         self.model_dict = self.load_model(gender=self.gender)
+        self.num_data = num_data
+        self.max_bonelength = 0
+        self.data_idx = 0
+        self.STATUS = STATUS
 
+        self.data = [None] * self.num_data
         if data_path is None:
             if beta is not None:
                 num_beta = beta.shape[0]
 
-            self.data = [None] * num_data
             for i in range(num_data):
                 self.data[i] = StarData(num_beta=num_beta)
                 # if i % 50 == 0:
                 #     print(f'build data {i}')
-        else:
-            self.load_data(data_path)
 
-        self.num_data = len(self.data)
-        self.max_bonelength = 0
-        self.data_idx = 0
+        #TODO: read all DataGenerator
+        else:
+            self.data[0] = StarData(num_beta=num_beta)
+            self.load_data_npy(data_path)
+
 
         #Usage: ~/star/ch/verts.py and ~/star/ch/star.py
         self.template = np.array(ch.array(self.model_dict['v_template'])).astype('float')
@@ -145,6 +194,7 @@ class DataGenerator:
             #local_data.shape[:,:,i] = self.template + local_cache[:,:,i]
         #local_data.deltashape = local_cache
 
+        #TODO: need to change(mesh shape is default shape without pose
         local_data.mesh_shape = np.zeros((local_cache.shape[0],local_cache.shape[1]))
         #for i in range(local_data.num_beta):
             #local_data.mesh_shape += local_data.deltashape[:,:,i]
@@ -199,26 +249,75 @@ class DataGenerator:
     #     with open(load_path, 'rb') as input:
     #         self.data = pickle.load(input)
 
-    #https://jangjy.tistory.com/330
+
     #TODO: Make more than adding just one data
+    #https://jangjy.tistory.com/330
     def load_data_npy(self, load_path):
+        print(self.data_idx)
         local_data = self.data[self.data_idx]
         saved_npz = np.load(load_path, allow_pickle=True)
 
-        #local_data.deltashape = saved_npz['deltashape']
-        #local_data.shape = saved_npz['shape']
-        local_data.beta = saved_npz['beta']
-        local_data.mesh_shape = saved_npz['mesh_shape']
-        local_data.mesh_shape_pos = saved_npz['mesh_shape_pos']
-        local_data.joint = saved_npz['joint']
-        local_data.bonelength = saved_npz['bonelength']
+        if self.STATUS == 0:
+            # local_data.deltashape = saved_npz['deltashape']
+            # local_data.shape = saved_npz['shape']
+            local_data.beta = saved_npz['beta']
+            local_data.mesh_shape = saved_npz['mesh_shape']
+            local_data.mesh_shape_pos = saved_npz['mesh_shape_pos']
+            local_data.joint = saved_npz['joint']
+            local_data.bonelength = saved_npz['bonelength']
+        elif self.STATUS == 1:
+            local_data.beta = saved_npz['beta']
+            local_data.joint = saved_npz['joint']
+            local_data.bonelength = saved_npz['bonelength']
+        elif self.STATUS == 2:
+            local_data.mesh_shape = saved_npz['mesh_shape']
+            local_data.mesh_shape_pos = saved_npz['mesh_shape_pos']
+
 
         saved_npz.close()
 
 
 
+#pram.
+#https://www.geeksforgeeks.org/python-initialize-a-dictionary-with-only-keys-from-a-list/
+class DataMerger:
+    def __init__(self, root, sample, idx_list, name='final_data'):
+        """
 
-if __name__ == "__main__":
+        Note:
+
+
+        Args:
+            root: data saved root
+            sample (:obj:): one data sample
+            idx_list (:list:`int`): idx_list[0] is the first index of data and idx_list[-1] is the end index.
+
+        """
+        self.root = root
+        self.data_range = [idx_list[0], idx_list[-1]]
+        self.data_size = idx_list[-1] - idx_list[0]
+        # self.mesh_shape = sample['mesh_shape']
+        # self.mesh_shape_pos = sample['mesh_shape_pos']
+        # DEBUG
+        # for key in sample:
+        #     print(([self.data_size] + list(sample[key].shape)))
+        self.data = {key: np.zeros(([self.data_size] + list(sample[key].shape))) for key in sample}
+        self.name = name
+
+    def merge(self, name='train'):
+        for i in range(self.data_range[0],self.data_range[1],1):
+            local_name = self.name + "_" + str(i)
+            local_path = os.path.join(self.root, local_name + '.npz')
+            local_data = load_data_npy(load_path=local_path, IsNeedDefault=False)
+
+            for key in self.data:
+                self.data[key][i-self.data_range[0]] += local_data[key]
+            print(i)
+
+
+        save_data_npy(save_path=os.path.join(self.root,name+'.npz'),local_data=self.data,IsNeedDefault=False)
+
+def make():
     for i in range(131072):
         save_path = '../data/final_data_'+str(i)+'.npz'
         #print(save_path)
@@ -226,14 +325,46 @@ if __name__ == "__main__":
         theStarData = DataGenerator(gender='female', num_data=1)
         theStarData.save_data_npy(save_path)
         #print('finish')
-    #
-    # save_path = '../data/final_data_3.npz'
-    # print(save_path)
-    # test0 = DataGenerator(gender='female', num_data=1)
-    # test0.load_data_npy(save_path)
-    #
-    # save_path = '../data/final_data_2.npz'
-    # print(save_path)
-    # test1 = DataGenerator(gender='female', num_data=1)
-    # test1.load_data_npy(save_path)
-    # print('hh')
+
+
+def merge():
+    sample_path = '../data/final_data_0.npz'
+    sample = load_data_npy(sample_path, IsNeedDefault=False)
+    mergedDataTrain = DataMerger(root='../data',sample=sample,idx_list=[0,32768])
+    mergedDataTrain.merge()
+
+    mergedDataTest = DataMerger(root='../data',sample=sample,idx_list=[32768,32768+8192])
+    mergedDataTest.merge(name='test')
+
+    mergedDataValidation = DataMerger(root='../data',sample=sample,idx_list=[32768+8192,32768+8192+8192])
+    mergedDataValidation.merge(name='validation')
+
+
+def save_reference():
+    local_data_path = '../data/final_data_0.npz'
+    localData = DataGenerator(gender='female',data_path=local_data_path,beta=None,num_data=1,num_beta=300,STATUS=2)
+
+    save_path = '../data/reference.npz'
+
+    #DEBUG
+    _max = -1
+    _min = 1
+    for index, val in np.ndenumerate(localData.shapeblendshape):
+        if val > _max:
+            _max = val
+        if val < _min:
+            _min = val
+    print(_max,_min)
+    # np.savez_compressed(save_path,
+    #                     mesh_shape=localData.data[0].mesh_shape,
+    #                     mesh_shape_pos=localData.data[0].mesh_shape_pos,
+    #                     shapeblendshape=localData.shapeblendshape,
+    #                     jointregressor_matrix=localData.jointregessor_matrix)
+
+if __name__ == "__main__":
+    # make()
+    # merge()
+    save_reference()
+
+#-4를 넣었을떄 x,y,z가 어디까지 확장되는지 4를 넣었을떄 x,y,z가 어디까지 확장되는지
+#

@@ -9,6 +9,7 @@ STAR/config.py
 star.egg-info/PKG-INFO
 *.npy
 *.zip
+model/wandb/*
 wandb/*
 resources/*
 demo/wandb/*

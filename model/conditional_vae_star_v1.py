@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
 import matplotlib.pyplot as plt
-from demo.datasets import StarBetaBoneLengthDataset, ToTensor, Normalize
+from utils.datasets_v1 import StarBetaBoneLengthDataset, ToTensor, Normalize
 #https://greeksharifa.github.io/references/2020/06/10/wandb-usage/
 import wandb
 
@@ -78,8 +78,8 @@ class Encoder(nn.Module):
         # x is of shape [batch_size, input_dim + n_classes]
 
         hidden = F.relu(self.bn1(self.fc1(x)))
-        hidden = F.relu(self.bn2(self.fc2(hidden)))
-        hidden = F.relu(self.bn3(self.fc3(hidden)))
+        #hidden = F.relu(self.bn2(self.fc2(hidden)))
+        #hidden = F.relu(self.bn3(self.fc3(hidden)))
         # hidden is of shape [batch_size, hidden_dim]
 
         # latent parameters
@@ -366,19 +366,19 @@ def setup_trained_model(trained_time=None):
     transform = transformation()
 
     train_dataset = StarBetaBoneLengthDataset(
-        npy_file='C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/demo/saved_bonelength_train.npy',
+        npy_file='../demo/saved_bonelength_train.npy',
         transform=transform,
         length=DATA_SIZE
     )
 
     test_dataset = StarBetaBoneLengthDataset(
-        npy_file='C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/demo/saved_bonelength_test.npy',
+        npy_file='../demo/saved_bonelength_test.npy',
         transform=transform,
         length=DATA_SIZE
     )
 
     validation_dataset = StarBetaBoneLengthDataset(
-        npy_file='C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/demo/saved_bonelength_validation.npy',
+        npy_file='../demo/saved_bonelength_validation.npy',
         transform=transform)
 
     train_iterator = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
