@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
 import matplotlib.pyplot as plt
+sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 from utils.datasets_v2 import StarBetaBoneLengthDataset, Normalize
 #https://greeksharifa.github.io/references/2020/06/10/wandb-usage/
 import wandb
@@ -47,7 +48,6 @@ e = 0
 # last channel is always (hidden_dim, target_dim) not follow config.
 hyperparameter_defaults = dict(
     data_size = DATA_SIZE,
-    num_channel = 3,
     encoder_channel_size = 5,
     encoder_channels_0 = 16,
     encoder_channels_1 = 4,
@@ -234,6 +234,8 @@ class CVAE(nn.Module):
 
         self.reference = reference
         # self.shapeblendshape_shape = self.reference['shapeblendshape'].shape
+        # self.encoderSimple = Encoder(config, config.input_dim_mesh, config.latent_dim)
+        # self.decoderSimple = Decoder(config, config.latent_dim, num_beta)
         self.encoderBonelength = Encoder(config, config.input_dim_mesh + config.dim_bonelength, config.dim_bonelength)
         self.encoderShapestyle = Encoder(config, config.input_dim_mesh + config.dim_bonelength, config.latent_dim)
         self.decoder = Decoder(config, config.dim_bonelength + config.latent_dim, num_beta)
@@ -252,7 +254,11 @@ class CVAE(nn.Module):
         return x_sample
 
     def forward(self, beta, bonelength, delta=None):
+        return self.reduction(beta,bonelength,delta=delta)
+        # return self.original(beta,bonelength,delta=delta)
+        # return self.simple(beta,bonelength,delta=delta)
 
+    def original(self, beta, bonelength, delta=None):
         # x = torch.cat((x, y), dim=1)
         # x = torch.zeros(([beta.shape[0]] + list(self.shapeblendshape_shape)), device=beta.device, dtype=torch.float32)
         # for i in range(0, beta.shape[0]):
@@ -282,6 +288,38 @@ class CVAE(nn.Module):
         generated_x = self.calculate_mesh(generated_beta)
 
         return x, generated_x, z_mu, z_var, z_bonelength, generated_beta
+
+    def simple(self, beta, bonelength, delta=None):
+        x = self.calculate_mesh(beta)
+        # encode
+        # bone length
+        x_flat = torch.flatten(x, start_dim=1)
+
+        # shape style
+        z_mu, z_var = self.encoderSimple(x_flat)
+        z = self.reparamterization(z_mu, z_var, delta=delta)
+
+        # decode
+        generated_beta = self.decoderSimple(z)
+        generated_x = self.calculate_mesh(generated_beta)
+
+        return x, generated_x, z_mu, z_var, bonelength,generated_beta
+
+    def reduction(self, beta, bonelength, delta=None):
+        x = self.calculate_mesh(beta)
+        # encode
+        # bone length
+        x_flat = torch.flatten(x, start_dim=1)
+
+        # shape style
+        z_mu, z_var = self.encoderSimple(x_flat)
+        z = self.reparamterization(z_mu, z_var, delta=delta)
+
+        # decode
+        generated_beta = self.decoderSimple(z)
+        generated_x = self.calculate_mesh(generated_beta)
+
+        return x, generated_x, z_mu, z_var, bonelength,generated_beta
 
     def calculate_mesh(self, beta):
         x = torch.zeros([beta.shape[0]]+list(self.reference['shapeblendshape'].shape),device=device,dtype=torch.float32)
@@ -315,7 +353,7 @@ def calculate_bonelength_loss(bonelength, reconstructed_bonelength):
     # reconstruction loss
     RCL = F.mse_loss(reconstructed_bonelength, bonelength, size_average=False)
     # RCL = F.binary_cross_entropy(reconstructed_bonelength, bonelength, size_average=False)
-
+    # print(RCL)
     return RCL
 
 
@@ -534,21 +572,21 @@ def setup_trained_model(trained_time=None):
         path='../data/train.npz',
         transform=transform,
         device=device,
-        #debug=len(generated_beta_list)
+        debug=len(generated_beta_list)
     )
 
     test_dataset = StarBetaBoneLengthDataset(
         path='../data/test.npz',
         transform=transform,
         device=device,
-        #debug=len(generated_beta_list)
+        debug=len(generated_beta_list)
     )
 
     validation_dataset = StarBetaBoneLengthDataset(
         path='../data/train.npz',
         transform=transform,
         device=device,
-        #debug=len(generated_beta_list)
+        debug=len(generated_beta_list)
     )
 
     train_iterator = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
@@ -580,8 +618,9 @@ if __name__ == "__main__":
     main()
     print(hyperparameter_defaults)
     #https://stackoverflow.com/questions/54268029/how-to-convert-a-pytorch-tensor-into-a-numpy-array
+    torch.set_printoptions(precision=2)
     for beta_pair in generated_beta_list:
-        print(beta_pair[0], beta_pair[1])
+        print((beta_pair[0] - beta_pair[1])/beta_pair[0]*100.0)
         original_val = beta_pair[0].detach().cpu().numpy()[0,:]
         new_val = beta_pair[1].detach().cpu().numpy()[0,:]
         extract_obj(save_path="C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/",name="stm"+"_original",betas=original_val)

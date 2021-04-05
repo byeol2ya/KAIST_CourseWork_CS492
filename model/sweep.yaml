@@ -6,8 +6,6 @@ metric:
 parameters:
   data_size:
     values: [-1]
-  num_channel:
-    values: [3]
   encoder_channel_size:
     value: [ 3, 4, 5 ]
   encoder_channels_0:
