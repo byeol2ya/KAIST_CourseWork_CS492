@@ -47,7 +47,9 @@ class Normalize(object):
 
     def __call__(self, sample):
         beta_val, bonelength_val = sample['beta'], sample['bonelength']
-        beta_val = (beta_val-0.0)/0.048089/5
+        # beta_val = (beta_val-0.0)/0.048089/5
+        beta_val /= 1.35
+
         # bonelength_val = (bonelength_val - 0.373924) * 2.67173 * 0.5 + 0.5
         bonelength_val = (bonelength_val - 0.373924) * 2.67173
 
@@ -62,8 +64,8 @@ class StarBetaBoneLengthDataset(Dataset):
         # assert (True, "Data type is incorrect('train', 'test', 'validation') or param. datasize_dict is incorrect.")
 
     def __len__(self):
-        # return self.data['beta'].shape[0]
-        return 16
+        return self.data['beta'].shape[0]
+        #return 2
 
     def __getitem__(self, idx):
         if self.debug is not -1:
