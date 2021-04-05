@@ -28,20 +28,44 @@ stm = time.strftime('%Y_%m_%d_%H_%M_%S', tm)
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # print(f'device: {device}')
 # BATCH_SIZE = 64         # number of data points in each batch
-BATCH_SIZE = 8         # number of data points in each batch
-N_EPOCHS = 2           # times to run the model on complete data
-# N_EPOCHS = 1000           # times to run the model on complete data
-INPUT_DIM_DELTASHAPE = 6890*3*300     # size of each input
-INPUT_DIM_BONELENGTH = 23     # size of each input
+BATCH_SIZE = 32         # number of data points in each batch
+N_EPOCHS = 100           # times to run the model on complete data
+INPUT_DIM_MESH = 6890*3     # size of each input
+DIM_BONELENGTH = 23     # size of each input
 HIDDEN_DIM = 256        # hidden dimension
 LATENT_DIM = 32         # latent vector dimension
 N_CLASSES = 14          # number of classes in the data
-DATA_SIZE = 30000
-lr = 1e-2               # learning rate
+DATA_SIZE = -1
+lr = 1e-1               # learning rate
 
 PATH = None
 
 e = 0
+
+# Set up your default hyperparameters before wandb.init
+# so they get properly set in the sweep
+# last channel is always (hidden_dim, target_dim) not follow config.
+hyperparameter_defaults = dict(
+    data_size = DATA_SIZE,
+    num_channel = 3,
+    encoder_channel_size = 5,
+    encoder_channels_0 = 16,
+    encoder_channels_1 = 4,
+    encoder_channels_2 = 2,
+    encoder_channels_3 = 2,
+    #encoder_channels_4 = 1,
+    decoder_channel_size = 4,
+    decoder_channels_0 = 2,
+    decoder_channels_1 = 2,
+    decoder_channels_2 = 1,
+    #decoder_channels_3 = 1,
+    latent_dim = 40,
+    batch_size = BATCH_SIZE,
+    learning_rate = lr,
+    epochs = N_EPOCHS,
+    input_dim_mesh = INPUT_DIM_MESH,
+    dim_bonelength = DIM_BONELENGTH,
+    )
 
 #https://discuss.pytorch.org/t/pixelwise-weights-for-mseloss/1254/2
 def weighted_mse_loss(input,target,weights):
@@ -56,11 +80,40 @@ def weighted_mse_loss(input,target,weights):
     return loss
 
 
+def set_channel(channel_size, channel_list, target_dim, latent_dim, IsEncoder = True) -> list:
+    '''
+    Args:
+        target_dim: input(encoder), output(decoder)
+    '''
+    ret = [1]
+    accumulated_dim = 1
+
+
+    for channel_no in range(channel_size):
+        accumulated_dim *= channel_list[channel_no]
+        if latent_dim * accumulated_dim > target_dim:
+            break
+        elif latent_dim * accumulated_dim == target_dim:
+            ret += [accumulated_dim]
+            break
+        else:
+            ret += [accumulated_dim]
+
+    # ret += [latent_dim]
+    return ret
+
+def mlp_block(input_dim, output_dim):
+    return nn.Sequential(
+        nn.Linear(input_dim, output_dim),
+        nn.BatchNorm1d(output_dim),
+        nn.ReLU(),
+    )
+
 class Encoder(nn.Module):
     ''' This the encoder part of VAE
 
     '''
-    def __init__(self, input_dim, hidden_dim, latent_dim):
+    def __init__(self, config, input_dim, latent_dim):
         '''
         Args:
             input_dim: A integer indicating the size of input (in case of MNIST 28 * 28).
@@ -69,6 +122,16 @@ class Encoder(nn.Module):
             n_classes: A integer indicating the number of classes. (dimension of one-hot representation of labels)
         '''
         super().__init__()
+        config_channel_list = [config.encoder_channels_0,config.encoder_channels_1,config.encoder_channels_2,config.encoder_channels_3]
+        self.encoder_channel_list = set_channel(config.encoder_channel_size-1,config_channel_list,input_dim,latent_dim)
+        #https://michigusa-nlp.tistory.com/26
+        #https://towardsdatascience.com/pytorch-how-and-when-to-use-module-sequential-modulelist-and-moduledict-7a54597b5f17
+        mlp_blocks = [mlp_block(input_dim//dim_0, input_dim//dim_1)
+                       for dim_0, dim_1 in zip(self.encoder_channel_list, self.encoder_channel_list[1:])]
+        #unpacking
+        #https://mingrammer.com/understanding-the-asterisk-of-python/#2-%EB%A6%AC%EC%8A%A4%ED%8A%B8%ED%98%95-%EC%BB%A8%ED%85%8C%EC%9D%B4%EB%84%88-%ED%83%80%EC%9E%85%EC%9D%98-%EB%8D%B0%EC%9D%B4%ED%84%B0%EB%A5%BC-%EB%B0%98%EB%B3%B5-%ED%99%95%EC%9E%A5%ED%95%98%EA%B3%A0%EC%9E%90-%ED%95%A0-%EB%95%8C
+        self.encoder = nn.Sequential(*mlp_blocks)
+
 
         # self.fc1 = nn.Linear(input_dim, hidden_dim)
         # self.bn1 = nn.BatchNorm1d(hidden_dim)
@@ -76,18 +139,22 @@ class Encoder(nn.Module):
         # self.bn2 = nn.BatchNorm1d(hidden_dim//4)
         # self.fc3 = nn.Linear(hidden_dim//4, hidden_dim//(4*4))
         # self.bn3 = nn.BatchNorm1d(hidden_dim//(4*4))
-        self.fc1 = nn.Linear(input_dim, hidden_dim//4)
-        self.bn1 = nn.BatchNorm1d(hidden_dim//4)
-        self.fc2 = nn.Linear(hidden_dim//4, hidden_dim//16)
-        self.bn2 = nn.BatchNorm1d(hidden_dim//16)
-        self.mu = nn.Linear(hidden_dim//16, latent_dim)
-        self.var = nn.Linear(hidden_dim//16, latent_dim)
+        # self.fc1 = nn.Linear(input_dim, hidden_dim//4)
+        # self.bn1 = nn.BatchNorm1d(hidden_dim//4)
+        # self.fc2 = nn.Linear(hidden_dim//4, hidden_dim//16)
+        # self.bn2 = nn.BatchNorm1d(hidden_dim//16)
+        self.mu = nn.Linear(input_dim//self.encoder_channel_list[-1], latent_dim)
+        self.var = nn.Linear(input_dim//self.encoder_channel_list[-1], latent_dim)
 
+        # torch.nn.init.xavier_uniform_(self.encoder.weight)
+        # torch.nn.init.xavier_uniform_(self.mu.weight)
+        # torch.nn.init.xavier_uniform_(self.var.weight)
     def forward(self, x):
         # x is of shape [batch_size, input_dim + n_classes]
 
-        hidden = F.relu(self.bn1(self.fc1(x)))
-        hidden = F.relu(self.bn2(self.fc2(hidden)))
+        hidden = self.encoder(x)
+        # hidden = F.relu(self.bn1(self.fc1(x)))
+        # hidden = F.relu(self.bn2(self.fc2(hidden)))
         #hidden = F.relu(self.bn3(self.fc3(hidden)))
         # hidden is of shape [batch_size, hidden_dim]
 
@@ -104,7 +171,7 @@ class Decoder(nn.Module):
     ''' This the decoder part of VAE
 
     '''
-    def __init__(self, latent_dim, hidden_dim, output_dim):
+    def __init__(self, config, latent_dim, output_dim):
         '''
         Args:
             latent_dim: A integer indicating the latent size.
@@ -113,24 +180,36 @@ class Decoder(nn.Module):
             n_classes: A integer indicating the number of classes. (dimension of one-hot representation of labels)
         '''
         super().__init__()
-        self.fc1 = nn.Linear(latent_dim, latent_dim*2)
-        self.bn1 = nn.BatchNorm1d(latent_dim*2)
-        self.fc2 = nn.Linear(latent_dim*2, output_dim)
-        self.bn2 = nn.BatchNorm1d(output_dim)
-        self.fc3 = nn.Linear(output_dim, output_dim)
-        self.bn3 = nn.BatchNorm1d(output_dim)
+        config_channel_list = [config.decoder_channels_0, config.decoder_channels_1, config.decoder_channels_2]
+        self.decoder_channel_list = set_channel(config.decoder_channel_size-1, config_channel_list, output_dim, latent_dim,IsEncoder=False)
+        #https://michigusa-nlp.tistory.com/26
+        #https://towardsdatascience.com/pytorch-how-and-when-to-use-module-sequential-modulelist-and-moduledict-7a54597b5f17
+        mlp_blocks = [mlp_block(latent_dim*dim_0, latent_dim*dim_1)
+                       for dim_0, dim_1 in zip(self.decoder_channel_list, self.decoder_channel_list[1:])]
+        self.decoder = nn.Sequential(*mlp_blocks)
+        # self.fc1 = nn.Linear(latent_dim, latent_dim*2)
+        # self.bn1 = nn.BatchNorm1d(latent_dim*2)
+        # self.fc2 = nn.Linear(latent_dim*2, output_dim)
+        # self.bn2 = nn.BatchNorm1d(output_dim)
+        # self.fc3 = nn.Linear(output_dim, output_dim)
+        # self.bn3 = nn.BatchNorm1d(output_dim)
         # self.latent_to_hidden = nn.Linear(latent_dim + n_classes, hidden_dim)
         # self.hidden_to_out = nn.Linear(hidden_dim, output_dim)
-        self.linear1 = nn.Linear(output_dim, output_dim*2)
-        self.linear2 = nn.Linear(output_dim*2, output_dim)
+        self.linear = nn.Linear(latent_dim*self.decoder_channel_list[-1],output_dim)
+        # self.linear2 = nn.Linear(output_dim*2, output_dim)
+
+        # torch.nn.init.xavier_uniform_(self.decoder.weight)
+        # torch.nn.init.xavier_uniform_(self.linear.weight)
 
     def forward(self, x):
         # x is of shape [batch_size, latent_dim + num_classes]
-        hidden = F.relu(self.bn1(self.fc1(x)))
-        hidden = F.relu(self.bn2(self.fc2(hidden)))
-        hidden = F.tanh(self.bn3(self.fc3(hidden)))
-        generated_x = self.linear1(hidden)
-        generated_x = self.linear2(generated_x)
+        hidden = self.decoder(x)
+        generated_x = self.linear(hidden)
+        # hidden = F.relu(self.bn1(self.fc1(x)))
+        # hidden = F.relu(self.bn2(self.fc2(hidden)))
+        # hidden = F.tanh(self.bn3(self.fc3(hidden)))
+        # generated_x = self.linear1(hidden)
+        # generated_x = self.linear2(generated_x)
         # output = F.relu(self.fc4(hidden))
         # x is of shape [batch_size, hidden_dim]
         # generated_x = self.linear(generated_x)
@@ -143,7 +222,7 @@ class CVAE(nn.Module):
     ''' This the VAE, which takes a encoder and decoder.
 
     '''
-    def __init__(self, input_dim_deltashape, input_dim_bonelength, hidden_dim, latent_dim, reference, num_beta=300, latent_dim_bonelength=23):
+    def __init__(self, config, reference, num_beta=300):
         '''
         Args:
             input_dim: A integer indicating the size of input (in case of MNIST 28 * 28).
@@ -154,10 +233,11 @@ class CVAE(nn.Module):
         super().__init__()
 
         self.reference = reference
-        self.shapeblendshape_shape = self.reference['shapeblendshape'].shape
-        self.encoderBonelength = Encoder(input_dim_deltashape + input_dim_bonelength, hidden_dim, latent_dim_bonelength)
-        self.encoderShapestyle = Encoder(input_dim_deltashape + input_dim_bonelength, hidden_dim, latent_dim)
-        self.decoder = Decoder(latent_dim+latent_dim_bonelength, hidden_dim, num_beta)
+        # self.shapeblendshape_shape = self.reference['shapeblendshape'].shape
+        self.encoderBonelength = Encoder(config, config.input_dim_mesh + config.dim_bonelength, config.dim_bonelength)
+        self.encoderShapestyle = Encoder(config, config.input_dim_mesh + config.dim_bonelength, config.latent_dim)
+        self.decoder = Decoder(config, config.dim_bonelength + config.latent_dim, num_beta)
+
 
     # reparameterize
     # https://whereisend.tistory.com/54
@@ -174,10 +254,15 @@ class CVAE(nn.Module):
     def forward(self, beta, bonelength, delta=None):
 
         # x = torch.cat((x, y), dim=1)
-        x = torch.zeros(([beta.shape[0]] + list(self.shapeblendshape_shape)), device=beta.device, dtype=torch.float32)
-        for i in range(0, beta.shape[0]):
-            x[i] = beta[i] * self.reference['shapeblendshape']
+        # x = torch.zeros(([beta.shape[0]] + list(self.shapeblendshape_shape)), device=beta.device, dtype=torch.float32)
+        # for i in range(0, beta.shape[0]):
+        #     x[i] = beta[i] * self.reference['shapeblendshape']
 
+        # x = torch.zeros((beta.shape[0], self.shapeblendshape_shape[0], self.shapeblendshape_shape[2]), device=beta.device, dtype=torch.float32)
+        # for i in range(0, beta.shape[0]):
+        #     x[i] = beta[i] * self.reference['shapeblendshape']
+
+        x = self.calculate_mesh(beta)
         # encode
         # bone length
         x_flat = torch.flatten(x, start_dim=1)
@@ -194,26 +279,29 @@ class CVAE(nn.Module):
         z_mu = torch.cat((z_bonelength_mu, z_shapestyle_mu), dim=1)
         z_var = torch.cat((z_bonelength_var, z_shapestyle_var), dim=1)
         generated_beta = self.decoder(z)
+        generated_x = self.calculate_mesh(generated_beta)
 
-        generated_x = torch.zeros(([beta.shape[0]] + list(self.shapeblendshape_shape)), device=beta.device, dtype=torch.float32)
-        for i in range(0, beta.shape[0]):
-            generated_x[i] = generated_beta[i] * self.reference['shapeblendshape']
         return x, generated_x, z_mu, z_var, z_bonelength, generated_beta
 
+    def calculate_mesh(self, beta):
+        x = torch.zeros([beta.shape[0]]+list(self.reference['shapeblendshape'].shape),device=device,dtype=torch.float32)
+        for batch_idx in range(beta.shape[0]):
+            x[batch_idx] = beta[batch_idx,:] * self.reference['shapeblendshape']
+            #print(x.shape,self.reference['shapeblendshape'].shape)
+        x = torch.sum(x, -1) + self.reference['mesh_shape_pos']
+
+        return x
+
 def calculate_3D_loss(x, reconstructed_x):
-    local_loss = pow(x[:, :, 0] - reconstructed_x[:, :, 0], 2)
-    for k in range(3):
-        local_loss += pow(x[:,:,k] - reconstructed_x[:,:,k],2)
-    local_loss = torch.sum(torch.sqrt(local_loss))
+    local_loss = pow(x - reconstructed_x, 2)
+    local_loss = torch.sum(torch.sqrt(torch.sum(local_loss, -1)))
 
     return local_loss
 
 def calculate_base_loss(x, reconstructed_x, mean, log_var):
     # reconstruction loss
 
-    RCL = calculate_3D_loss(reconstructed_x[:, :, :, 0], x[:, :, :, 0])
-    for i in range(1, x.size()[-1]):
-        RCL += calculate_3D_loss(reconstructed_x[:,:,:,i], x[:,:,:,i])
+    RCL = calculate_3D_loss(x, reconstructed_x)/6890.0*float(DIM_BONELENGTH)
     # RCL = weighted_mse_loss(reconstructed_x,x,None)
     # RCL = F.binary_cross_entropy(reconstructed_x, x, size_average=False)
     # kl divergence loss
@@ -369,10 +457,12 @@ def save_trained_model(model, train_dataset, test_dataset, train_iterator, test_
         train_loss /= len(train_dataset)
         test_loss /= len(test_dataset)
 
-        wandb.log({
-            "Examples": example_images,
-            "Train Loss":train_loss,
-            "Test Loss": test_loss})
+        metrics = {'train_loss': train_loss, 'test_loss': test_loss}
+        wandb.log(metrics)
+        # wandb.log({
+        #     "Examples": example_images,
+        #     "Train Loss":train_loss,
+        #     "Test Loss": test_loss})
 
 
         print(f'Epoch {e}, Train Loss: {train_loss*1000:.2f}, Test Loss: {test_loss*1000:.2f}')
@@ -427,7 +517,11 @@ def load_reference(path='../data/reference.npz',device=None) -> dict:
     return ret
 
 def setup_trained_model(trained_time=None):
-    global PATH, generated_beta_list
+    global PATH, generated_beta_list, config
+
+    wandb.init(config=hyperparameter_defaults, project="wandb-example")
+    config = wandb.config
+
     if trained_time is None:
         PATH = 'C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/resources/cvae_' + stm + '.pt'
     else:
@@ -440,21 +534,21 @@ def setup_trained_model(trained_time=None):
         path='../data/train.npz',
         transform=transform,
         device=device,
-        debug=len(generated_beta_list)
+        #debug=len(generated_beta_list)
     )
 
     test_dataset = StarBetaBoneLengthDataset(
         path='../data/test.npz',
         transform=transform,
         device=device,
-        debug=len(generated_beta_list)
+        #debug=len(generated_beta_list)
     )
 
     validation_dataset = StarBetaBoneLengthDataset(
         path='../data/train.npz',
         transform=transform,
         device=device,
-        debug=len(generated_beta_list)
+        #debug=len(generated_beta_list)
     )
 
     train_iterator = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
@@ -463,13 +557,14 @@ def setup_trained_model(trained_time=None):
 
 
     reference = load_reference(device=device)
-    model = CVAE(INPUT_DIM_DELTASHAPE,INPUT_DIM_BONELENGTH, HIDDEN_DIM, LATENT_DIM, reference).to(device)
+    model = CVAE(config=config, reference=reference).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     #http://www.gisdeveloper.co.kr/?p=8443
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
 
     if not os.path.isfile(PATH):
-        wandb.init(project="wandb-tutorial")
+        #sort, dnn style, load data, input/loss, version
+        # wandb.init(config=config,project="vae-mlp-beta-(6890,3)-2")
         wandb.watch(model)
         save_trained_model(model, train_dataset, test_dataset, train_iterator, test_iterator, optimizer, scheduler)
     else:
@@ -481,13 +576,13 @@ def setup_trained_model(trained_time=None):
 if __name__ == "__main__":
     global generated_beta_list
     generated_beta_list = []
-    for i in range(2):
-        main()
-
+    #for i in range(2):
+    main()
+    print(hyperparameter_defaults)
     #https://stackoverflow.com/questions/54268029/how-to-convert-a-pytorch-tensor-into-a-numpy-array
     for beta_pair in generated_beta_list:
         print(beta_pair[0], beta_pair[1])
         original_val = beta_pair[0].detach().cpu().numpy()[0,:]
         new_val = beta_pair[1].detach().cpu().numpy()[0,:]
-        extract_obj(save_path="C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/",name="original",betas=original_val)
-        extract_obj(save_path="C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/",name="new",betas=new_val)
+        extract_obj(save_path="C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/",name="stm"+"_original",betas=original_val)
+        extract_obj(save_path="C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/",name="stm"+"_new",betas=new_val)
