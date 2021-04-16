@@ -92,6 +92,7 @@ class MyProblem(Problem):
         bone_xyz = v_avg.flatten()
         self.bone_length = cbl.cal_bone(bone_xyz,left_idx_list=self.left_idx_list,right_idx_list=self.right_idx_list,offset=3) #23
         print("ha")
+    
 
 F ={}
 

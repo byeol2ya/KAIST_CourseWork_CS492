@@ -141,6 +141,13 @@ class DataGenerator:
 
         return model_dict
 
+    def cal_bonelength_both_from_mesh(self):
+        model_dict = esd.get_gender_model(self.gender)
+        v_avg = np.array(ch.array(model_dict['v_template']))
+        self.avg_joints = np.matmul(self.joint_weight, v_avg)
+        bone_xyz = v_avg.flatten()
+        self.bone_length = self.cal_bonelength_both(bone_xyz)  # 23
+
     def cal_bonelength_both(self, pos_xyz, offset=3):
         first_idx_list = [0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12, 13, 14, 16, 17, 18, 19, 20, 21]
         second_idx_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
@@ -347,19 +354,19 @@ def save_reference():
     save_path = '../data/reference.npz'
 
     #DEBUG
-    _max = -1
-    _min = 1
-    for index, val in np.ndenumerate(localData.shapeblendshape):
-        if val > _max:
-            _max = val
-        if val < _min:
-            _min = val
-    print(_max,_min)
-    # np.savez_compressed(save_path,
-    #                     mesh_shape=localData.data[0].mesh_shape,
-    #                     mesh_shape_pos=localData.data[0].mesh_shape_pos,
-    #                     shapeblendshape=localData.shapeblendshape,
-    #                     jointregressor_matrix=localData.jointregessor_matrix)
+    # _max = -1
+    # _min = 1
+    # for index, val in np.ndenumerate(localData.shapeblendshape):
+    #     if val > _max:
+    #         _max = val
+    #     if val < _min:
+    #         _min = val
+    # print(_max,_min)
+    np.savez_compressed(save_path,
+                        mesh_shape=localData.data[0].mesh_shape,
+                        mesh_shape_pos=localData.data[0].mesh_shape_pos,
+                        shapeblendshape=localData.shapeblendshape,
+                        jointregressor_matrix=localData.jointregessor_matrix)
 
 if __name__ == "__main__":
     # make()

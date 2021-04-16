@@ -48,7 +48,7 @@ class Normalize(object):
     def __call__(self, sample):
         beta_val, bonelength_val = sample['beta'], sample['bonelength']
         # beta_val = (beta_val-0.0)/0.048089/5
-        beta_val /= 1.35
+        beta_val /= 5
 
         # bonelength_val = (bonelength_val - 0.373924) * 2.67173 * 0.5 + 0.5
         bonelength_val = (bonelength_val - 0.373924) * 2.67173
