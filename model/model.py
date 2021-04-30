@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 def set_channel(channel_size, channel_list, target_dim, latent_dim, IsEncoder = True) -> list:
     '''
@@ -67,8 +68,8 @@ class Encoder(nn.Module):
         super().__init__()
         if encoder_channel_list is None:
             # config_channel_list = [config.encoder_channels_0,config.encoder_channels_1,config.encoder_channels_2,config.encoder_channels_3]
-            config_channel_list = [config.encoder_channels_0,config.encoder_channels_1,config.encoder_channels_2,config.encoder_channels_3,
-                                   config.encoder_channels_4,config.encoder_channels_5,config.encoder_channels_6]
+            config_channel_list = [config.encoder_channels_0,config.encoder_channels_1,config.encoder_channels_2,config.encoder_channels_3,config.encoder_channels_4]
+            # ,config.encoder_channels_5,config.encoder_channels_6]
             self.encoder_channel_list = set_channel(config.encoder_channel_size-1,config_channel_list,input_dim,latent_dim)
         else:
             self.encoder_channel_list = encoder_channel_list
@@ -91,7 +92,7 @@ class Encoder(nn.Module):
         # torch.nn.init.xavier_uniform_(self.var.weight)
     def forward(self, x):
         # x is of shape [batch_size, input_dim + n_classes]
-
+        b = x.shape
         hidden = self.encoder(x)
         # hidden = F.relu(self.bn1(self.fc1(x)))
         # hidden is of shape [batch_size, hidden_dim]
@@ -144,6 +145,8 @@ class Decoder(nn.Module):
         # x is of shape [batch_size, latent_dim + num_classes]
         hidden = self.decoder(x)
         # hidden = torch.tanh(self.linear1(hidden))
+        hidden = F.tanh(self.linear1(hidden))
+        # hidden = self.linear1(hidden)
         generated_x = self.linear2(hidden)
         # hidden = F.relu(self.bn1(self.fc1(x)))
         # hidden = F.relu(self.bn2(self.fc2(hidden)))
@@ -175,15 +178,17 @@ class CVAE(nn.Module):
         self.reference = reference
         self.device = device
         # self.init_original(config=config,num_beta=num_beta)
-        self.init_simple(config=config,num_beta=num_beta)
         # self.init_reduction(config=config,num_beta=num_beta)
         # self.init_bonelength_encoder_test(config=config,num_beta=num_beta)
+        self.init_vae_6(config=config,num_beta=num_beta)
+        # self.init_simple(config=config,num_beta=num_beta)
 
     def forward(self, beta, bonelength, delta=None):
         # return self.reduction(beta,None,delta=delta)
         # return self.original(beta,bonelength,delta=delta)
-        return self.simple(beta,bonelength,delta=delta)
         # return self.bonelength_encoder_test(beta)
+        return self.vae_6(beta, bonelength)
+        # return self.simple(beta,bonelength,delta=delta)
 
     def init_original(self, config, num_beta):
         self.encoderBonelength = Encoder(config, config.input_dim_mesh + config.dim_bonelength, config.dim_bonelength)
@@ -214,6 +219,23 @@ class CVAE(nn.Module):
 
     def init_bonelength_encoder_test(self, config, num_beta):
         self.init_simple(config, num_beta)
+
+    def init_vae_6(self, config, num_beta):
+        config_channel_list = [config.encoder_channels_1,config.encoder_channels_2,
+                               config.encoder_channels_3,config.encoder_channels_4]
+        self.encoder_channel_list = set_channel(config.encoder_channel_size-1, config_channel_list, config.input_dim_mesh, config.latent_dim)
+        mlp_blocks = [mlp_block(config.dim_bonelength // dim_0, config.dim_bonelength // dim_1)
+                      for dim_0, dim_1 in zip(self.encoder_channel_list[0:1], self.encoder_channel_list[1:2])]
+        mlp_blocks += [mlp_block(config.dim_bonelength // self.encoder_channel_list[1],
+                                 config.dim_bonelength // self.encoder_channel_list[2], False, False)]
+
+        # self.encoder_channel_list = set_channel(len(config_channel_list), config_channel_list,
+        #                                         322+23, config.latent_dim)
+
+        self.encoderDeepBonelength = nn.Sequential(*mlp_blocks)
+        self.encoderDeepShapestyle = Encoder(config, config.input_dim_mesh, config.latent_dim)
+        self.decoder = Decoder(config, 5 + config.latent_dim, num_beta)
+
 
     # reparameterize
     # https://whereisend.tistory.com/54
@@ -271,9 +293,10 @@ class CVAE(nn.Module):
         # decode
         generated_x = self.decoderSimple(z)
         generated_mesh = self.calculate_mesh(generated_x)
-        generated_bonelength = self.
+        generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
+        #print(mesh.shape,generated_mesh.shape,z_mu.shape,z_var.shape,bonelength.shape,generated_bonelength.shape,generated_x.shape)
 
-        return mesh, generated_mesh, z_mu, z_var, bonelength, generated_bonelength
+        return mesh, generated_mesh, z_mu, z_var, bonelength, generated_bonelength, generated_x
 
     def reduction(self, beta, bonelength, delta=None):
         x = self.calculate_mesh(beta)
@@ -300,6 +323,27 @@ class CVAE(nn.Module):
 
         return x, generated_x, z_shapestyle_mu, z_shapestyle_var, z_bonelength, generated_beta, z_bonelength_mu, z_bonelength_var
 
+    def vae_6(self, x, bonelength, delta=None):
+        mesh = self.calculate_mesh(x)
+        # encode
+        # bone length
+        mesh_flatten = torch.flatten(mesh, start_dim=1)
+
+        bonelength_reducted = self.encoderDeepBonelength(bonelength)
+
+        # shape style
+        z_shapestyle_mu, z_shapestyle_var = self.encoderDeepShapestyle(mesh_flatten)
+        z_shapestyle = self.reparamterization(z_shapestyle_mu, z_shapestyle_var, delta=delta)
+
+        # decode
+        z = torch.cat((bonelength_reducted, z_shapestyle), dim=1)
+        generated_x = self.decoder(z)
+        generated_mesh = self.calculate_mesh(generated_x)
+        generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
+        #print(mesh.shape,generated_mesh.shape,z_shapestyle_mu.shape,z_shapestyle_var.shape,bonelength.shape,bonelength_reducted.shape,generated_x.shape)
+        return mesh, generated_mesh, z_shapestyle_mu, z_shapestyle_var, bonelength, generated_bonelength, generated_x
+
+
     def bonelength_encoder_test(self, beta, delta=None):
         x = self.calculate_mesh(beta)
         # encode
@@ -314,15 +358,45 @@ class CVAE(nn.Module):
 
         return None, None, z_mu, z_var, z, None
 
-
     def calculate_mesh(self, beta):
-        x = torch.zeros([beta.shape[0]]+list(self.reference['shapeblendshape'].shape),device=self.device,dtype=torch.float32)
+        _shape = [beta.shape[0]]+list(self.reference['shapeblendshape'].shape)
+        x = torch.zeros(_shape,device=self.device,dtype=torch.float32)
         for batch_idx in range(beta.shape[0]):
             x[batch_idx] = beta[batch_idx,:] * self.reference['shapeblendshape']
             #print(x.shape,self.reference['shapeblendshape'].shape)
         x = torch.sum(x, -1) + self.reference['mesh_shape_pos']
 
         return x
+
+    #TODO: check batchsize
+    def calculate_bonelength_both_from_mesh(self, v_mesh):
+        joints = torch.matmul(self.reference['jointregressor_matrix'], v_mesh)
+        bone_length = self.calculate_bonelength_both(joints)  # 23
+        bone_length = bone_length - 0.373924 * 2.67173
+
+        return bone_length
+
+    def calculate_bonelength_both(self, joints, offset=3):
+        first_idx_list = [0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12, 13, 14, 16, 17, 18, 19, 20, 21]
+        second_idx_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+
+        return self.calculate_bonelength(vertex_list=joints, first_idx_list=first_idx_list, second_idx_list=second_idx_list, offset=offset)
+
+    #TODO: check norm2 dtype
+    def calculate_bonelength(self, vertex_list,
+                        first_idx_list=[0, 1, 4, 7, 0, 3, 6, 9, 13, 16, 18, 20, 9, 12],
+                        second_idx_list=[1, 4, 7, 10, 3, 6, 9, 13, 16, 18, 20, 22, 12, 15],
+                        offset=3):
+        local_size = len(first_idx_list)
+        bonelength_list = torch.zeros([vertex_list.shape[0], local_size],device=self.device)
+        vertex_list_first = torch.index_select(vertex_list, 1, torch.tensor(first_idx_list, device=self.device))
+        vertex_list_second = torch.index_select(vertex_list, 1, torch.tensor(second_idx_list, device=self.device))
+
+        temp = vertex_list_first - vertex_list_second
+        bonelength_list = torch.norm(temp,dim=2)
+        # bonelength_list[i] = torch.cdist(vertex_list_first, vertex_list_second, p=2)
+
+        return bonelength_list
 
     # def calculate_bonelength_both(self):
     #     first_idx_list = [0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12, 13, 14, 16, 17, 18, 19, 20, 21]

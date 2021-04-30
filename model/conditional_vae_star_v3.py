@@ -18,7 +18,7 @@ from torchvision import datasets, transforms
 import matplotlib.pyplot as plt
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 from utils.datasets_v2 import StarBetaBoneLengthDataset, Normalize
-import model as md
+import modelprob as md
 
 #https://greeksharifa.github.io/references/2020/06/10/wandb-usage/
 import wandb
@@ -31,6 +31,8 @@ stm = time.strftime('%Y_%m_%d_%H_%M_%S', tm)
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # print(f'device: {device}')
 # BATCH_SIZE = 64         # number of data points in each batch
+TRAIN_SIZE = 32768
+TEST_SIZE = 8192
 BATCH_SIZE = 32         # number of data points in each batch
 N_EPOCHS = 100           # times to run the model on complete data
 INPUT_DIM_MESH = 6890*3     # size of each input
@@ -66,56 +68,6 @@ hyperparameter_defaults = dict(
     decoder_channels_3 = 2,
     #decoder_channels_4 = 1,
     latent_dim = LATENT_DIM,
-    batch_size = BATCH_SIZE,
-    learning_rate = lr,
-    epochs = N_EPOCHS,
-    input_dim_mesh = INPUT_DIM_MESH,
-    dim_bonelength = DIM_BONELENGTH,
-    )
-
-#use first 3 encoder_channel as reduction
-hyperparameter_deepVAE = dict(
-    name = 'deepVAE',
-    data_size = DATA_SIZE,
-    encoder_channel_size = 7,
-    encoder_channels_0 = 8,
-    encoder_channels_1 = 4,
-    encoder_channels_2 = 2,
-    encoder_channels_3 = 2,
-    encoder_channels_4 = 2,
-    encoder_channels_5 = 2,
-    # encoder_channels_6 = 1,
-    decoder_channel_size = 4,
-    decoder_channels_0 = 2,
-    decoder_channels_1 = 2,
-    decoder_channels_2 = 1,
-    #decoder_channels_3 = 1,
-    latent_dim = 40,
-    batch_size = BATCH_SIZE,
-    learning_rate = lr,
-    epochs = N_EPOCHS,
-    input_dim_mesh = INPUT_DIM_MESH,
-    dim_bonelength = DIM_BONELENGTH,
-    )
-
-hyperparameter_testVAE = dict(
-    name = 'testVAE',
-    data_size = DATA_SIZE,
-    encoder_channel_size=8,
-    encoder_channels_0=4,
-    encoder_channels_1=4,
-    encoder_channels_2=2,
-    encoder_channels_3=2,
-    encoder_channels_4=2,
-    encoder_channels_5=2,
-    encoder_channels_6=2,
-    # encoder_channels_7 = 1,
-    decoder_channel_size = 4,
-    decoder_channels_0 = 2,
-    decoder_channels_1 = 2,
-    decoder_channels_2 = 1,
-    #decoder_channels_3 = 1,
-    latent_dim = DIM_BONELENGTH,
     batch_size = BATCH_SIZE,
     learning_rate = lr,
     epochs = N_EPOCHS,
@@ -195,42 +147,52 @@ def train(model,train_iterator,optimizer):
 
     # loss of the epoch
     train_loss = 0
+    training_bias = (TRAIN_SIZE - 1) / (BATCH_SIZE - 1)
+    with torch.autograd.set_detect_anomaly(True):
+        for i, (beta, bonelength) in enumerate(train_iterator):
+            # reshape the data into [batch_size, 784]
+            # print(x.shape)
+            # x = x.view(-1, INPUT_DIM)
+            # beta = beta.to(device)
 
-    for i, (beta, bonelength) in enumerate(train_iterator):
-        # reshape the data into [batch_size, 784]
-        # print(x.shape)
-        # x = x.view(-1, INPUT_DIM)
-        # beta = beta.to(device)
+            # y = y.view(-1, N_CLASSES)
+            # bonelength = bonelength.to(device)
 
-        # y = y.view(-1, N_CLASSES)
-        # bonelength = bonelength.to(device)
+            # update the gradients to zero
+            optimizer.zero_grad()
+            # forward pass
+            # loss
+            q_style, p, generated_beta, generated_bonelength, mu_Style, mu_Bonelength, Loss_Jacobian = model(beta, bonelength)
+            if e == N_EPOCHS-1:
+                generated_beta_list += [[beta, generated_beta]]
+                generated_bonelength_list += [[bonelength, generated_bonelength]]
 
-        # update the gradients to zero
-        optimizer.zero_grad()
+            loss_func_output = md.loss_function(model=model,
+                                    X=beta, X_hat=generated_beta,
+                                    q=q_style, p=p,
+                                    bonelength=bonelength, generated_bonelength=generated_bonelength,
+                                    mu_S=mu_Style, mu_B=mu_Bonelength, training_bias=training_bias,
+                                    BATCH_SIZE=BATCH_SIZE, device=device)
 
-        # forward pass
-        # loss
-        x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bonelength, generated_beta = model(beta, bonelength)
-        if e == N_EPOCHS-1:
-            generated_beta_list += [[beta, generated_beta]]
-            generated_bonelength_list += [[bonelength, reconstructed_bonelength]]
-        loss = loss_wrapper(x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bonelength,beta,generated_beta)
-        # loss = calculate_base_loss(x, reconstructed_x, z_mu, z_var)
-        # loss += calculate_bonelength_loss(bonelength, z_bonelength, z_mu_bonelength, z_var_bonelength)
+            loss_total, sublosses, subloss_names = loss_func_output
+            train_loss += loss_total
+            train_loss += Loss_Jacobian
+            # loss = calculate_base_loss(x, reconstructed_x, z_mu, z_var)
+            # loss += calculate_bonelength_loss(bonelength, z_bonelength, z_mu_bonelength, z_var_bonelength)
 
-        # loss = calculate_base_loss(x, reconstructed_x, z_mu, z_var)
-        # loss = calculate_bonelength_loss(bonelength, z_bonelength, z_mu, z_var)
-        #loss += calculate_3D_loss(x, reconstructed_x)/6890.0*float(DIM_BONELENGTH)
-        # print(f'ori:\n{loss}\nrecon:\n{loss_bone}\n')
-        # print(f'ori: {loss}')
-        #loss += loss_bone
+            # loss = calculate_base_loss(x, reconstructed_x, z_mu, z_var)
+            # loss = calculate_bonelength_loss(bonelength, z_bonelength, z_mu, z_var)
+            #loss += calculate_3D_loss(x, reconstructed_x)/6890.0*float(DIM_BONELENGTH)
+            # print(f'ori:\n{loss}\nrecon:\n{loss_bone}\n')
+            # print(f'ori: {loss}')
+            #loss += loss_bone
 
-        # backward pass
-        loss.backward()
-        train_loss += loss.item()
+            # backward pass
+            loss_total.backward()
+            train_loss += loss_total.item()
 
-        # update the weights
-        optimizer.step()
+            # update the weights
+            optimizer.step()
 
     return train_loss
 
@@ -243,6 +205,7 @@ def test(model,test_iterator):
 
     # test loss for the data
     test_loss = 0
+    training_bias = (TEST_SIZE - 1) / (BATCH_SIZE - 1)
 
     # we don't need to track the gradients, since we are not updating the parameters during evaluation / testing
     with torch.no_grad():
@@ -255,18 +218,18 @@ def test(model,test_iterator):
             bonelength = bonelength.to(device)
 
             # forward pass
-            # x, reconstructed_x, z_mu, z_var, z_bonelength, generated_beta, z_mu_bonelength, z_var_bonelength = model(beta, bonelength)
-            x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bonelength, generated_beta = model(beta, bonelength)
-            loss = loss_wrapper(x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bonelength,beta,generated_beta)
+            q_style, p, generated_beta, generated_bonelength, mu_Style, mu_Bonelength, Loss_Jacobian = model(beta, bonelength)
 
-            # loss
-            # loss = calculate_base_loss(x, reconstructed_x, z_mu, z_var)
-            # loss += calculate_bonelength_loss(bonelength, z_bonelength, z_mu_bonelength, z_var_bonelength)
+            loss_func_output = md.loss_function(model=model,
+                                                X=beta, X_hat=generated_beta,
+                                                q=q_style, p=p,
+                                                bonelength=bonelength, generated_bonelength=generated_bonelength,
+                                                mu_S=mu_Style, mu_B=mu_Bonelength, training_bias=training_bias,
+                                                BATCH_SIZE=BATCH_SIZE, device=device)
 
-            # loss = calculate_base_loss(x, reconstructed_x, z_mu, z_var)
-            # loss = calculate_bonelength_loss(bonelength, z_bonelength, z_mu, z_var)
-
-            test_loss += loss.item()
+            loss_total, sublosses, subloss_names = loss_func_output
+            # test_loss = Loss_Jacobian
+            # test_loss += loss_total.item()
 
     return test_loss
 
@@ -342,7 +305,7 @@ def save_trained_model(model, train_dataset, test_dataset, train_iterator, test_
         test_loss /= len(test_dataset)
 
         metrics = {'train_loss': train_loss, 'test_loss': test_loss}
-        wandb.log(metrics)
+        # wandb.log(metrics)
         # wandb.log({
         #     "Examples": example_images,
         #     "Train Loss":train_loss,
@@ -403,8 +366,8 @@ def load_reference(path='../data/reference.npz',device=None) -> dict:
 def setup_trained_model(trained_time=None):
     global PATH, generated_beta_list, config
 
-    wandb.init(config=hyperparameter_defaults, project="STARVAE-5-1")
-    config = wandb.config
+    # wandb.init(config=hyperparameter_defaults, project="STARVAE-5-1")
+    # config = wandb.config
 
     if trained_time is None:
         PATH = 'C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/resources/cvae_' + stm + '.pt'
@@ -441,7 +404,7 @@ def setup_trained_model(trained_time=None):
 
 
     reference = load_reference(device=device)
-    model = md.CVAE(config=config, reference=reference, device=device).to(device)
+    model = md.CVAE(reference=reference, BATCH_SIZE=BATCH_SIZE, device=device).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     #http://www.gisdeveloper.co.kr/?p=8443
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
@@ -449,7 +412,7 @@ def setup_trained_model(trained_time=None):
     if not os.path.isfile(PATH):
         #sort, dnn style, load data, input/loss, version
         # wandb.init(config=config,project="vae-mlp-beta-(6890,3)-2")
-        wandb.watch(model)
+        # wandb.watch(model)
         save_trained_model(model, train_dataset, test_dataset, train_iterator, test_iterator, optimizer, scheduler)
     else:
         load_trained_model(model, optimizer)
@@ -475,14 +438,15 @@ def main():
     #     print(f'divide:\n{original_val - new_val}')
 
     np.set_printoptions(precision=3, suppress=True)
-    for bone_pair in generated_bonelength_list:
-        original_val = bone_pair[0].detach().cpu().numpy()[0, :]
-        new_val = bone_pair[1].detach().cpu().numpy()[0, :]
-        print(f'\n\n\n\n*--------------------bone------------------*')
-        print(f'original:\n{original_val}')
-        print(f'new:\n{new_val}')
-        print(f'divide:\n{(abs(original_val) - abs(new_val))}')
-        print(f'percent:\n{(abs(original_val) - abs(new_val))/abs(original_val) * 100.0}')
+    # for bone_pair in generated_bonelength_list:
+    bone_pair = generated_bonelength_list[-1]
+    original_val = bone_pair[0].detach().cpu().numpy()[0, :]
+    new_val = bone_pair[1].detach().cpu().numpy()[0, :]
+    print(f'\n\n\n\n*--------------------bone------------------*')
+    print(f'original:\n{original_val}')
+    print(f'new:\n{new_val}')
+    print(f'divide:\n{(abs(original_val) - abs(new_val))}')
+    print(f'percent:\n{(abs(original_val) - abs(new_val))/abs(original_val) * 100.0}')
 
     # for beta_pair in generated_beta_list:
     #         original_val = beta_pair[0].detach().cpu().numpy()[0,:]
