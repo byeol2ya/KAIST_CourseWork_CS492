@@ -301,7 +301,10 @@ class CVAE(nn.Module):
             output.backward(grad_output, create_graph=True)
             J[i] = inputs.grad
 
-        return J
+        # Cleanup
+        zero_gradients(inputs)
+        grad_output.zero_()
+        return torch.transpose(J, dim0=0, dim1=1)  # B x n x m
 
         #test
 
