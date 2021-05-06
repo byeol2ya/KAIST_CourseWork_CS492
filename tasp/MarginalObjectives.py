@@ -7,6 +7,7 @@ from numbers import Number
 from torch.nn.functional import softmax
 import sys
 sys.path.append('../')
+sys.path.append('../../')
 from probtorch.probtorch.objectives.montecarlo import ml
 
 

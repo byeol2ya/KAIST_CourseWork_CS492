@@ -18,7 +18,7 @@ from torchvision import datasets, transforms
 import matplotlib.pyplot as plt
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 from utils.datasets_v2 import StarBetaBoneLengthDataset, Normalize
-import modelprob as md
+import modelprob2 as md
 
 #https://greeksharifa.github.io/references/2020/06/10/wandb-usage/
 import wandb
@@ -28,11 +28,14 @@ from demo.load_chumpy import extract_obj
 tm = time.localtime()
 stm = time.strftime('%Y_%m_%d_%H_%M_%S', tm)
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+GPU_NUM = 3 # 원하는 GPU 번호 입력
+device = torch.device(f'cuda:{GPU_NUM}' if torch.cuda.is_available() else 'cpu')
 # print(f'device: {device}')
 # BATCH_SIZE = 64         # number of data points in each batch
-TRAIN_SIZE = 32768
-TEST_SIZE = 8192
+TRAIN_SIZE = 64
+TEST_SIZE = 64
+# TRAIN_SIZE = 32768
+# TEST_SIZE = 8192
 BATCH_SIZE = 32         # number of data points in each batch
 N_EPOCHS = 100           # times to run the model on complete data
 INPUT_DIM_MESH = 6890*3     # size of each input
@@ -42,6 +45,7 @@ LATENT_DIM = 50         # latent vector dimension
 N_CLASSES = 14          # number of classes in the data
 DATA_SIZE = -1
 lr = 1e-2               # learning rate
+FACTOR = 0.5
 
 PATH = None
 
@@ -138,63 +142,71 @@ def loss_wrapper(x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bone
     #     print(KLD.item(), RCL_x.item(), RCL_bone.item())
     return loss
 
+def weight_update(factor, target_network, network):
+    for target_param, param in zip(target_network.parameters(), network.parameters()):
+        print(f'before: {factor} {(param.data - target_param.data).sum()}')
+        target_param.data.copy_(param.data * factor + target_param.data*(1.0 - factor))
+        print(f'factor after: {factor} {(param.data - target_param.data).sum()}')
 
-def train(model,train_iterator,optimizer):
+def train(model,model_jacobian,train_iterator,optimizer,optimizer_jacobian):
     global generated_beta_list, generated_bonelength_list, task
     task = 'train'
     # set the train mode
     model.train()
+    model_jacobian.train()
 
     # loss of the epoch
     train_loss = 0
     training_bias = (TRAIN_SIZE - 1) / (BATCH_SIZE - 1)
-    with torch.autograd.set_detect_anomaly(True):
-        for i, (beta, bonelength) in enumerate(train_iterator):
-            print(i)
-            # reshape the data into [batch_size, 784]
-            # print(x.shape)
-            # x = x.view(-1, INPUT_DIM)
-            # beta = beta.to(device)
+    
+    optimizer.zero_grad()
+    optimizer_jacobian.zero_grad()
 
-            # y = y.view(-1, N_CLASSES)
-            # bonelength = bonelength.to(device)
+    for i, (beta, bonelength) in enumerate(train_iterator):
+        print(i)
+        # reshape the data into [batch_size, 784]
+        # print(x.shape)
+        # x = x.view(-1, INPUT_DIM)
+        # beta = beta.to(device)
 
-            # update the gradients to zero
-            optimizer.zero_grad()
-            # forward pass
-            # loss
-            q_style, p, generated_beta, generated_bonelength, mu_Style, mu_Bonelength, Loss_Jacobian = model(beta, bonelength)
-            if e == N_EPOCHS-1:
-                generated_beta_list += [[beta, generated_beta]]
-                generated_bonelength_list += [[bonelength, generated_bonelength]]
+        # y = y.view(-1, N_CLASSES)
+        # bonelength = bonelength.to(device)
 
-            loss_func_output = md.loss_function(model=model,
-                                    X=beta, X_hat=generated_beta,
-                                    q=q_style, p=p,
-                                    bonelength=bonelength, generated_bonelength=generated_bonelength,
-                                    mu_S=mu_Style, mu_B=mu_Bonelength, training_bias=training_bias,
-                                    BATCH_SIZE=BATCH_SIZE, device=device)
+        weight_update(1.0, model_jacobian, model)
+        # forward pass
+        # loss
+        generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh = model(beta, bonelength)
+        if e == N_EPOCHS-1 and i == 0:
+            generated_beta_list += [[beta, generated_beta]]
+            generated_bonelength_list += [[bonelength, generated_bonelength]]
+            
+        loss_func_output = md.loss_function(model=model,
+                                X=mesh, X_hat=generated_mesh,
+                                bonelength=bonelength, generated_bonelength=generated_bonelength,
+                                mu_S=mu_Style, std_S=std_Style,
+                                mu_B=bonelength_reduced, beta=beta,
+                                generated_beta=generated_beta,
+                                training_bias=training_bias,
+                                BATCH_SIZE=BATCH_SIZE, device=device)
 
-            loss_total, sublosses, subloss_names = loss_func_output
-            train_loss += loss_total
-            train_loss += Loss_Jacobian
-            # loss = calculate_base_loss(x, reconstructed_x, z_mu, z_var)
-            # loss += calculate_bonelength_loss(bonelength, z_bonelength, z_mu_bonelength, z_var_bonelength)
+        loss_jacobian = model_jacobian(beta=None, bonelength=None, mu_S=mu_Style, mu_B=bonelength_reduced)
+        loss_a, sublosses, subloss_names = loss_func_output
+        
+        # backward pass
+        loss_a.backward()
+        loss_jacobian.backward()
+        train_loss += loss_a.item()
+        train_loss += loss_jacobian.item()
+        
+        # update the gradients to zero
+        optimizer.zero_grad()
+        optimizer_jacobian.zero_grad()
+        weight_update(0.5, model_jacobian, model)
 
-            # loss = calculate_base_loss(x, reconstructed_x, z_mu, z_var)
-            # loss = calculate_bonelength_loss(bonelength, z_bonelength, z_mu, z_var)
-            #loss += calculate_3D_loss(x, reconstructed_x)/6890.0*float(DIM_BONELENGTH)
-            # print(f'ori:\n{loss}\nrecon:\n{loss_bone}\n')
-            # print(f'ori: {loss}')
-            #loss += loss_bone
+        # update the weights
+        optimizer.step()
 
-            # backward pass
-            loss_total.backward()
-            train_loss += loss_total.item()
-
-            # update the weights
-            optimizer.step()
-
+        
     return train_loss
 
 
@@ -292,15 +304,15 @@ def load_trained_model(model, optimizer):
     # plt.show()
 
 
-def save_trained_model(model, train_dataset, test_dataset, train_iterator, test_iterator, optimizer, scheduler):
+def save_trained_model(model, model_jacobian, train_dataset, test_dataset, train_iterator, test_iterator, optimizer, optimizer_jacobian, scheduler, scheduler_jacobian):
     global e
     e = 0
     best_test_loss = float('inf')
     example_images = []
 
     for e in range(N_EPOCHS):
-        train_loss = train(model, train_iterator, optimizer)
-        test_loss = test(model, test_iterator)
+        train_loss = train(model, model_jacobian, train_iterator, optimizer, optimizer_jacobian)
+        test_loss = test(model, model_jacobian, test_iterator)
 
         train_loss /= len(train_dataset)
         test_loss /= len(test_dataset)
@@ -407,14 +419,17 @@ def setup_trained_model(trained_time=None):
     reference = load_reference(device=device)
     model = md.CVAE(reference=reference, BATCH_SIZE=BATCH_SIZE, device=device).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
+    model_jacobian = md.CVAE(reference=reference, BATCH_SIZE=BATCH_SIZE, device=device, IsSupporter=True).to(device)
+    optimizer_jacobian = optim.Adam(model.parameters(), lr=lr)
     #http://www.gisdeveloper.co.kr/?p=8443
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
+    scheduler_jacobian = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
 
     if not os.path.isfile(PATH):
         #sort, dnn style, load data, input/loss, version
         # wandb.init(config=config,project="vae-mlp-beta-(6890,3)-2")
         # wandb.watch(model)
-        save_trained_model(model, train_dataset, test_dataset, train_iterator, test_iterator, optimizer, scheduler)
+        save_trained_model(model, model_jacobian, train_dataset, test_dataset, train_iterator, test_iterator, optimizer, optimizer_jacobian, scheduler, scheduler_jacobian)
     else:
         load_trained_model(model, optimizer)
 

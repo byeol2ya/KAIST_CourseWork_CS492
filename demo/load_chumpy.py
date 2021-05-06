@@ -18,7 +18,11 @@
 #
 # Code Developed by:
 # Ahmed A. A. Osman
-from star.ch.star import STAR
+
+import sys
+sys.path.append('../')
+sys.path.append('../../')
+from STAR_Private.star.ch.star import STAR
 import chumpy as ch
 import numpy as np
 

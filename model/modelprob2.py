@@ -184,38 +184,38 @@ class CVAE(nn.Module):
         self.temp_value = torch.unsqueeze(torch.tensor(value, dtype=torch.float32, device=self.device), 0)
         self.IsMu_B = IsMu_B
 
-    def forward_for_jacobian(self, value):
-        assert (self.temp_value is not None), "You should use 'set_save_value' first"
+    # def forward_for_jacobian(self, value):
+    #     assert (self.temp_value is not None), "You should use 'set_save_value' first"
 
-        if self.IsMu_B:
-            value = torch.unsqueeze(value, 0)
-            value.requires_grad_(True)
-            value.retain_grad()
-            generated_beta = self.decoder(value, self.temp_value)
-            generated_mesh = self.calculate_mesh(generated_beta)
-            generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
-            _, mu_hat_S, mu_hat_B, _ = self.encode(generated_beta, generated_bonelength,
-                                                   IsUseOnlyMu=True)  # This is mu_hat
-            mu_hat_S_ = mu_hat_S[0, :]
-            mu_hat_S_.requires_grad_(True)
-            mu_hat_S_.retain_grad()
-            return mu_hat_S_
+    #     if self.IsMu_B:
+    #         value = torch.unsqueeze(value, 0)
+    #         value.requires_grad_(True)
+    #         value.retain_grad()
+    #         generated_beta = self.decoder(value, self.temp_value)
+    #         generated_mesh = self.calculate_mesh(generated_beta)
+    #         generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
+    #         _, mu_hat_S, mu_hat_B, _ = self.encode(generated_beta, generated_bonelength,
+    #                                                IsUseOnlyMu=True)  # This is mu_hat
+    #         mu_hat_S_ = mu_hat_S[0, :]
+    #         mu_hat_S_.requires_grad_(True)
+    #         mu_hat_S_.retain_grad()
+    #         return mu_hat_S_
 
-        else:
-            value = torch.unsqueeze(value, 0)
-            value.requires_grad_(True)
-            value.retain_grad()
-            generated_beta = self.decoder(self.temp_value, value)
-            generated_mesh = self.calculate_mesh(generated_beta)
-            generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
-            _, mu_hat_S, mu_hat_B, _ = self.encode(generated_beta, generated_bonelength,
-                                                   IsUseOnlyMu=True)  # This is mu_hat
-            mu_hat_B_ = mu_hat_S[0, :]
-            mu_hat_B_.requires_grad_(True)
-            mu_hat_B_.retain_grad()
-            return mu_hat_B_
+    #     else:
+    #         value = torch.unsqueeze(value, 0)
+    #         value.requires_grad_(True)
+    #         value.retain_grad()
+    #         generated_beta = self.decoder(self.temp_value, value)
+    #         generated_mesh = self.calculate_mesh(generated_beta)
+    #         generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
+    #         _, mu_hat_S, mu_hat_B, _ = self.encode(generated_beta, generated_bonelength,
+    #                                                IsUseOnlyMu=True)  # This is mu_hat
+    #         mu_hat_B_ = mu_hat_S[0, :]
+    #         mu_hat_B_.requires_grad_(True)
+    #         mu_hat_B_.retain_grad()
+    #         return mu_hat_B_
 
-        self.temp_value = None
+    #     self.temp_value = None
 
     def forward_main(self, beta, bonelength):
         ##encode
@@ -312,7 +312,7 @@ class CVAE(nn.Module):
 
         return bonelength_list
 
-    def jacobianer(self, mu_B, mu_S):
+    def jacobianer(self, mu_S, mu_B):
         _mu_B = torch.tensor(mu_B.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
         _mu_S = torch.tensor(mu_S.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
         _z_S, eps_S = self.add_noise(_mu_S)
@@ -327,7 +327,9 @@ class CVAE(nn.Module):
         generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
         _, mu_hat_S, _, _ = self.encode(generated_beta, generated_bonelength, IsUseOnlyMu=True)  # This is mu_hat
 
-        loss = (mu_hat_B - _mu_B) * eps_S + (mu_hat_S - _mu_S) * eps_B
+        loss = (((mu_hat_B - _mu_B) * eps_S).pow(2) + ((mu_hat_S - _mu_S) * eps_B).pow(2)).sum()
+
+        return loss
 
         # for k in range(self.BATCH_SIZE):
         #     # # This is the funtion passed as an argument to the differentiation operator
