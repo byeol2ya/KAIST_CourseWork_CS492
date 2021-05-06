@@ -51,7 +51,7 @@ BETA_4 = 50.0
 CUDA = torch.cuda.is_available()
 
 GAMMA = 10.0
-JACOBIAN_LOSS_WEIGHT = 10.0
+JACOBIAN_LOSS_WEIGHT = 1000.0
 LAMBDA_INTRA_GROUP_ON_DIAG = 0.00  # Note these two are present in the prior matcher
 LAMBDA_INTRA_GROUP_OFF_DIAG = 0.00
 BETA = (  ## Collection of KL divergence loss weights ##
@@ -327,9 +327,9 @@ class CVAE(nn.Module):
         generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
         _, mu_hat_S, _, _ = self.encode(generated_beta, generated_bonelength, IsUseOnlyMu=True)  # This is mu_hat
 
-        loss = (((mu_hat_B - _mu_B) * eps_S).pow(2) + ((mu_hat_S - _mu_S) * eps_B).pow(2)).sum()
+        loss = torch.sum(((mu_hat_B - _mu_B) * eps_S).pow(2) + ((mu_hat_S - _mu_S) * eps_B).pow(2))
 
-        return loss
+        return loss * JACOBIAN_LOSS_WEIGHT
 
         # for k in range(self.BATCH_SIZE):
         #     # # This is the funtion passed as an argument to the differentiation operator
@@ -396,14 +396,14 @@ def loss_wrapper(x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bone
     mean, log_var = z_mu, z_var
     KLD = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
     # RCL_x = F.mse_loss(x, reconstructed_x) * b_beta
-    RCL_x = 0
+    # RCL_x = 0
     RCL_bone = F.mse_loss(reconstructed_bonelength, bonelength) * b_beta
     RCL_beta = F.mse_loss(reconstructed_beta, beta)
 
     # loss = KLD + RCL_beta
-    # loss = KLD + RCL_bone + RCL_beta
+    loss = KLD + RCL_bone + RCL_beta
     # loss = KLD + RCL_bone + RCL_x
-    loss = KLD + RCL_x + RCL_bone + RCL_beta
+    # loss = KLD + RCL_x + RCL_bone + RCL_beta
     # if task == 'train':
     #     print(KLD.item(), RCL_x.item(), RCL_bone.item())
     return loss, {'KLD': KLD, 'RCL_bone': RCL_bone, 'RCL_beta': RCL_beta}
@@ -482,7 +482,6 @@ def loss_function(
     #         onDiagPen, offDiagPen, interPen, # Covariance penalty terms
     #         jacobian_dSdB, jacobian_dBdS
     # ]
-    term_set = None
     term_names = [
         'log-likelihood', 'Intra-TC', 'DimWise-KL', 'MI(x,z)', 'Inter-TC',
         'ON-DIAG', 'OFF-DIAG', 'INTER-COVAR',

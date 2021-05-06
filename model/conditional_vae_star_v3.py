@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch.optim.lr_scheduler
+import datetime
 
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
@@ -28,14 +29,14 @@ from demo.load_chumpy import extract_obj
 tm = time.localtime()
 stm = time.strftime('%Y_%m_%d_%H_%M_%S', tm)
 
-GPU_NUM = 3 # 원하는 GPU 번호 입력
+GPU_NUM = 4 # 원하는 GPU 번호 입력
 device = torch.device(f'cuda:{GPU_NUM}' if torch.cuda.is_available() else 'cpu')
 # print(f'device: {device}')
 # BATCH_SIZE = 64         # number of data points in each batch
-TRAIN_SIZE = 64
-TEST_SIZE = 64
-# TRAIN_SIZE = 32768
-# TEST_SIZE = 8192
+# TRAIN_SIZE = 64
+# TEST_SIZE = 64
+TRAIN_SIZE = 4096
+TEST_SIZE = 1024
 BATCH_SIZE = 32         # number of data points in each batch
 N_EPOCHS = 100           # times to run the model on complete data
 INPUT_DIM_MESH = 6890*3     # size of each input
@@ -46,6 +47,8 @@ N_CLASSES = 14          # number of classes in the data
 DATA_SIZE = -1
 lr = 1e-2               # learning rate
 FACTOR = 0.5
+TRAINED_TIME = None
+# TRAINED_TIME = '2021_05_06_16_35_01'
 
 PATH = None
 
@@ -144,9 +147,11 @@ def loss_wrapper(x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bone
 
 def weight_update(factor, target_network, network):
     for target_param, param in zip(target_network.parameters(), network.parameters()):
-        print(f'before: {factor} {(param.data - target_param.data).sum()}')
+        # print(f'target/origin: {factor} {target_param.data.sum()} {param.data.sum()}')
+        # print(f'before: {factor} {(param.data - target_param.data).sum()}')
         target_param.data.copy_(param.data * factor + target_param.data*(1.0 - factor))
-        print(f'factor after: {factor} {(param.data - target_param.data).sum()}')
+        # print(f'target/origin: {factor} {target_param.data.sum()} {param.data.sum()}')
+        # print(f'after : {factor} {(param.data - target_param.data).sum()}')
 
 def train(model,model_jacobian,train_iterator,optimizer,optimizer_jacobian):
     global generated_beta_list, generated_bonelength_list, task
@@ -157,6 +162,7 @@ def train(model,model_jacobian,train_iterator,optimizer,optimizer_jacobian):
 
     # loss of the epoch
     train_loss = 0
+    losses = {'KLD':0.0,'RCL_bone':0.0,'RCL_beta':0.0,'Cov':0.0,'Jac':0.0}
     training_bias = (TRAIN_SIZE - 1) / (BATCH_SIZE - 1)
     
     optimizer.zero_grad()
@@ -190,34 +196,44 @@ def train(model,model_jacobian,train_iterator,optimizer,optimizer_jacobian):
                                 BATCH_SIZE=BATCH_SIZE, device=device)
 
         loss_jacobian = model_jacobian(beta=None, bonelength=None, mu_S=mu_Style, mu_B=bonelength_reduced)
-        loss_a, sublosses, subloss_names = loss_func_output
+        loss_a, sublosses, L_covarpen = loss_func_output
         
         # backward pass
         loss_a.backward()
         loss_jacobian.backward()
         train_loss += loss_a.item()
         train_loss += loss_jacobian.item()
+
+        losses['KLD'] += sublosses['KLD'].item() * 0.5
+        losses['RCL_bone'] += sublosses['RCL_bone'].item() * 0.5
+        losses['RCL_beta'] += sublosses['RCL_beta'].item() * 0.5
+        losses['Cov'] += L_covarpen.item() * 0.5
+        losses['Jac'] += loss_jacobian.item() * 0.5
+
+        # update the weights
+        optimizer.step()
+        optimizer_jacobian.step()
+
         
         # update the gradients to zero
         optimizer.zero_grad()
         optimizer_jacobian.zero_grad()
-        weight_update(0.5, model_jacobian, model)
+        weight_update(0.5, model, model_jacobian)
 
-        # update the weights
-        optimizer.step()
-
-        
-    return train_loss
+    
+    train_loss =  train_loss * 0.5
+    return train_loss, losses
 
 
-def test(model,test_iterator):
-    global task
+def test(model,model_jacobian,test_iterator,IsNeedSave=False):
+    global generated_beta_list, generated_bonelength_list, task
     task = 'test'
     # set the evaluation mode
     model.eval()
 
     # test loss for the data
     test_loss = 0
+    losses = {'KLD':0.0,'RCL_bone':0.0,'RCL_beta':0.0,'Cov':0.0,'Jac':0.0}
     training_bias = (TEST_SIZE - 1) / (BATCH_SIZE - 1)
 
     # we don't need to track the gradients, since we are not updating the parameters during evaluation / testing
@@ -230,21 +246,37 @@ def test(model,test_iterator):
             # y = y.view(-1, N_CLASSES)
             bonelength = bonelength.to(device)
 
-            # forward pass
-            q_style, p, generated_beta, generated_bonelength, mu_Style, mu_Bonelength, Loss_Jacobian = model(beta, bonelength)
+            generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh = model(beta, bonelength)
+
+            if i == 0 and IsNeedSave:
+                generated_beta_list += [[beta, generated_beta]]
+                generated_bonelength_list += [[bonelength, generated_bonelength]]
 
             loss_func_output = md.loss_function(model=model,
-                                                X=beta, X_hat=generated_beta,
-                                                q=q_style, p=p,
-                                                bonelength=bonelength, generated_bonelength=generated_bonelength,
-                                                mu_S=mu_Style, mu_B=mu_Bonelength, training_bias=training_bias,
-                                                BATCH_SIZE=BATCH_SIZE, device=device)
+                                    X=mesh, X_hat=generated_mesh,
+                                    bonelength=bonelength, generated_bonelength=generated_bonelength,
+                                    mu_S=mu_Style, std_S=std_Style,
+                                    mu_B=bonelength_reduced, beta=beta,
+                                    generated_beta=generated_beta,
+                                    training_bias=training_bias,
+                                    BATCH_SIZE=BATCH_SIZE, device=device)
 
-            loss_total, sublosses, subloss_names = loss_func_output
-            # test_loss = Loss_Jacobian
-            # test_loss += loss_total.item()
+            loss_jacobian = model_jacobian(beta=None, bonelength=None, mu_S=mu_Style, mu_B=bonelength_reduced)
+            
+            loss_a, sublosses, L_covarpen = loss_func_output
+            
+            test_loss += loss_a.item()
+            test_loss += loss_jacobian.item()
 
-    return test_loss
+            losses['KLD'] += sublosses['KLD'].item() * 0.5
+            losses['RCL_bone'] += sublosses['RCL_bone'].item() * 0.5
+            losses['RCL_beta'] += sublosses['RCL_beta'].item() * 0.5
+            losses['Cov'] += L_covarpen.item() * 0.5
+            losses['Jac'] += loss_jacobian.item() * 0.5
+
+            
+    test_loss =  test_loss * 0.5
+    return test_loss, losses
 
 """
 #pram: delta should be same size with LATENT_DIM or 1
@@ -280,12 +312,19 @@ def get_star(model,beta=None,delta=None):
 """
 
 
-def load_trained_model(model, optimizer):
+def load_trained_model(model, model_jacobian, _dataset, _iterator):
     checkpoint = torch.load(PATH)
     model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    # optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     epoch = checkpoint['epoch']
 
+    e = epoch
+
+    test_loss,test_losses = test(model, model_jacobian, _iterator, IsNeedSave=True)
+
+    test_loss /= len(_dataset)
+
+    print(f'Epoch {e}, The Loss: {test_loss:.4f}')
     # # create a random latent vector
     # z = torch.randn(1, LATENT_DIM).to(device)
     #
@@ -311,21 +350,33 @@ def save_trained_model(model, model_jacobian, train_dataset, test_dataset, train
     example_images = []
 
     for e in range(N_EPOCHS):
-        train_loss = train(model, model_jacobian, train_iterator, optimizer, optimizer_jacobian)
-        test_loss = test(model, model_jacobian, test_iterator)
+        train_loss, train_losses = train(model, model_jacobian, train_iterator, optimizer, optimizer_jacobian)
+        test_loss,test_losses = test(model, model_jacobian, test_iterator)
 
         train_loss /= len(train_dataset)
         test_loss /= len(test_dataset)
 
-        metrics = {'train_loss': train_loss, 'test_loss': test_loss}
-        # wandb.log(metrics)
+        metrics = {'train_loss': train_loss, 
+                    'test_loss': test_loss,
+                    'train_Jac': train_losses['Jac']/len(train_dataset),
+                    'test_Jac': test_losses['Jac']/len(test_dataset),
+                    'train_KLD': train_losses['KLD']/len(train_dataset),
+                    'train_RCL_bone': train_losses['RCL_bone']/len(train_dataset),
+                    'train_RCL_beta': train_losses['RCL_beta']/len(train_dataset),
+                    'train_Cov': train_losses['Cov']/len(train_dataset),
+                    'test_KLD': test_losses['KLD']/len(test_dataset),
+                    'test_RCL_bone': test_losses['RCL_bone']/len(test_dataset),
+                    'test_RCL_beta': test_losses['RCL_beta']/len(test_dataset),
+                    'test_Cov': test_losses['Cov']/len(test_dataset)
+                    }
+        wandb.log(metrics)
         # wandb.log({
         #     "Examples": example_images,
         #     "Train Loss":train_loss,
         #     "Test Loss": test_loss})
 
 
-        print(f'Epoch {e}, Train Loss: {train_loss*1000:.2f}, Test Loss: {test_loss*1000:.2f}')
+        print(f'Epoch {e}, Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}')
 
         # if best_test_loss > test_loss:
         #     best_test_loss = test_loss
@@ -376,16 +427,17 @@ def load_reference(path='./data/reference.npz',device=None) -> dict:
     ret = {key: torch.tensor(sample[key],dtype=torch.float32,device=device) for key in sample}
     return ret
 
-def setup_trained_model(trained_time=None):
-    global PATH, generated_beta_list, config
+def setup_trained_model():
+    global PATH, generated_beta_list, config, TRAINED_TIME
 
-    # wandb.init(config=hyperparameter_defaults, project="STARVAE-5-1")
+    # wandb.init(config=hyperparameter_defaults, project="STARVAE-7-with-Cov-Jac")
     # config = wandb.config
 
-    if trained_time is None:
-        PATH = 'C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/resources/cvae_' + stm + '.pt'
+    if TRAINED_TIME is None:
+        TRAINED_TIME = stm
+        PATH = '/Data/MGY/STAR_Private/resources/cvae_' + TRAINED_TIME + '.pt'
     else:
-        PATH = 'C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/resources/cvae_' + trained_time+ '.pt'
+        PATH = '/Data/MGY/STAR_Private/resources/cvae_' + TRAINED_TIME+ '.pt'
 
     #wandb.config.update()
     transform = transformation()
@@ -394,21 +446,21 @@ def setup_trained_model(trained_time=None):
         path='./data/train.npz',
         transform=transform,
         device=device,
-        # debug=len(generated_beta_list)
+        debug=TRAIN_SIZE
     )
 
     test_dataset = StarBetaBoneLengthDataset(
         path='./data/test.npz',
         transform=transform,
         device=device,
-        # debug=len(generated_beta_list)
+        debug=TEST_SIZE
     )
 
     validation_dataset = StarBetaBoneLengthDataset(
         path='./data/validation.npz',
         transform=transform,
         device=device,
-        # debug=len(generated_beta_list)
+        debug=TEST_SIZE
     )
 
     train_iterator = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
@@ -427,11 +479,11 @@ def setup_trained_model(trained_time=None):
 
     if not os.path.isfile(PATH):
         #sort, dnn style, load data, input/loss, version
-        # wandb.init(config=config,project="vae-mlp-beta-(6890,3)-2")
-        # wandb.watch(model)
+        wandb.init(project="STARVAE-7-with-Cov-Jac")
+        wandb.watch(model)
         save_trained_model(model, model_jacobian, train_dataset, test_dataset, train_iterator, test_iterator, optimizer, optimizer_jacobian, scheduler, scheduler_jacobian)
     else:
-        load_trained_model(model, optimizer)
+        load_trained_model(model, model_jacobian, train_dataset, train_iterator)
 
     return model, train_iterator, test_iterator, validation_dataset
 
@@ -441,7 +493,7 @@ def main():
     generated_bonelength_list = []
     #for i in range(2):
     wrapper()
-    print(hyperparameter_defaults)
+    # print(hyperparameter_defaults)
     #https://stackoverflow.com/questions/54268029/how-to-convert-a-pytorch-tensor-into-a-numpy-array
     #torch.set_printoptions(precision=2)
 
@@ -464,6 +516,17 @@ def main():
     print(f'divide:\n{(abs(original_val) - abs(new_val))}')
     print(f'percent:\n{(abs(original_val) - abs(new_val))/abs(original_val) * 100.0}')
 
+    beta_pair = generated_beta_list[-1]
+    original_val = beta_pair[0].detach().cpu().numpy()[0,:]
+    new_val = beta_pair[1].detach().cpu().numpy()[0,:]
+    print(f'\n\n\n\n*--------------------beta------------------*')
+    print(f'original:\n{original_val}')
+    print(f'new:\n{new_val}')
+    print(f'divide:\n{(abs(original_val) - abs(new_val))}')
+    print(f'percent:\n{(abs(original_val) - abs(new_val))/abs(original_val) * 100.0}')
+    extract_obj(save_path="/Data/MGY/STAR_Private/outputs/",name=TRAINED_TIME+"_original",betas=original_val)
+    extract_obj(save_path="/Data/MGY/STAR_Private/outputs/",name=TRAINED_TIME+"_new",betas=new_val)
+
     # for beta_pair in generated_beta_list:
     #         original_val = beta_pair[0].detach().cpu().numpy()[0,:]
     #         new_val = beta_pair[1].detach().cpu().numpy()[0,:]
@@ -472,9 +535,13 @@ def main():
     #         print(f'new:\n{new_val}')
     #         print(f'divide:\n{(abs(original_val) - abs(new_val))}')
     #         print(f'percent:\n{(abs(original_val) - abs(new_val))/abs(original_val) * 100.0}')
-    #         extract_obj(save_path="C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/",name="stm"+"_original",betas=original_val)
-    #         extract_obj(save_path="C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/",name="stm"+"_new",betas=new_val)
+    #         extract_obj(save_path="/Data/MGY/STAR_Private/",name="stm"+"_original",betas=original_val)
+    #         extract_obj(save_path="C:/Users/TheOtherMotion/Documents/GitHub/STAR_Private/",name="stm"+"_new",betas=new_val)
 
 
 if __name__ == "__main__":
+    #https://www.studytonight.com/post/calculate-time-taken-by-a-program-to-execute-in-python
+    start = time.time()
     main()
+    end = time.time()
+    print(f"Runtime of the program is {str(datetime.timedelta(seconds=end-start))}")

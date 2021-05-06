@@ -64,12 +64,15 @@ class StarBetaBoneLengthDataset(Dataset):
         # assert (True, "Data type is incorrect('train', 'test', 'validation') or param. datasize_dict is incorrect.")
 
     def __len__(self):
-        return self.data['beta'].shape[0]
+        if self.debug != -1:
+            return self.debug
+        else:
+            return self.data['beta'].shape[0]
         # return 2
 
     def __getitem__(self, idx):
-        if self.debug is not -1:
-            idx = self.debug
+        # if self.debug is not -1:
+        #     idx = self.debug
         ret = {key: torch.tensor(self.data[key][idx], dtype=torch.float32, device=self.device) for key in self.data}
 
         #
