@@ -18,7 +18,6 @@
 #
 # Code Developed by:
 # Ahmed A. A. Osman
-
 from star.ch.star import STAR
 import chumpy as ch
 import numpy as np

@@ -150,6 +150,7 @@ def train(model,train_iterator,optimizer):
     training_bias = (TRAIN_SIZE - 1) / (BATCH_SIZE - 1)
     with torch.autograd.set_detect_anomaly(True):
         for i, (beta, bonelength) in enumerate(train_iterator):
+            print(i)
             # reshape the data into [batch_size, 784]
             # print(x.shape)
             # x = x.view(-1, INPUT_DIM)
@@ -349,7 +350,7 @@ def transformation():
     return transform
 
 #https://sanghyu.tistory.com/19
-def load_reference(path='../data/reference.npz',device=None) -> dict:
+def load_reference(path='./data/reference.npz',device=None) -> dict:
     """Example function with PEP 484 type annotations.
 
     Args:
@@ -378,21 +379,21 @@ def setup_trained_model(trained_time=None):
     transform = transformation()
 
     train_dataset = StarBetaBoneLengthDataset(
-        path='../data/train.npz',
+        path='./data/train.npz',
         transform=transform,
         device=device,
         # debug=len(generated_beta_list)
     )
 
     test_dataset = StarBetaBoneLengthDataset(
-        path='../data/test.npz',
+        path='./data/test.npz',
         transform=transform,
         device=device,
         # debug=len(generated_beta_list)
     )
 
     validation_dataset = StarBetaBoneLengthDataset(
-        path='../data/validation.npz',
+        path='./data/validation.npz',
         transform=transform,
         device=device,
         # debug=len(generated_beta_list)

@@ -5,7 +5,9 @@
 
 from numbers import Number
 from torch.nn.functional import softmax
-from probtorch.objectives.montecarlo import ml
+import sys
+sys.path.append('../')
+from probtorch.probtorch.objectives.montecarlo import ml
 
 
 def elbo(q, p, sample_dim=None, batch_dim=None, alpha=0.1, beta=(1.0, 1.0, 1.0, 1.0, 1.0),
