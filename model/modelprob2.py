@@ -51,7 +51,7 @@ BETA_4 = 50.0
 CUDA = torch.cuda.is_available()
 
 GAMMA = 10.0
-JACOBIAN_LOSS_WEIGHT = 1000.0
+JACOBIAN_LOSS_WEIGHT = 5.0
 LAMBDA_INTRA_GROUP_ON_DIAG = 0.00  # Note these two are present in the prior matcher
 LAMBDA_INTRA_GROUP_OFF_DIAG = 0.00
 BETA = (  ## Collection of KL divergence loss weights ##
@@ -140,7 +140,6 @@ class Decoder(nn.Module):
 
     def forward(self, value, z):
         z_cat = torch.cat((z, value), dim=1)
-
         if z_cat.shape[0] == 1:
             z_cat = torch.cat((z_cat, z_cat), dim=0)
         beta_reconstructed = self.dec_image(z_cat)
@@ -164,6 +163,7 @@ class CVAE(nn.Module):
         self.reference = reference
         self.IsSupporter = IsSupporter
         self.IsA = IsA
+        self.element_idx = None
 
     def encode(self, beta, bonelength, IsUseOnlyMu=None):
         mesh = self.calculate_mesh(beta)
@@ -221,6 +221,7 @@ class CVAE(nn.Module):
         ##encode
         std_Style, bonelength_reduced, mu_Style, mesh = self.encode(beta, bonelength)
         z = self.reparameterization(mu_Style, std_Style)
+        # self.device = z.get_device()
         ##decode
         generated_beta = self.decoder(z, bonelength_reduced)
         generated_mesh = self.calculate_mesh(generated_beta)
@@ -231,10 +232,11 @@ class CVAE(nn.Module):
     def forward_supporter(self, mu_S, mu_B):
         return self.jacobianer(mu_S, mu_B)
 
-    def forward(self, beta, bonelength, mu_S=None, mu_B=None):
+    def forward(self, beta, bonelength, mu_S=None, mu_B=None, element_idx=None):
         if self.IsSupporter is False:
             return self.forward_main(beta=beta, bonelength=bonelength)
         else:
+            self.element_idx = element_idx
             return self.forward_supporter(mu_S=mu_S, mu_B=mu_B)
 
     # reparameterize
@@ -250,12 +252,19 @@ class CVAE(nn.Module):
         return x_sample
 
     def add_noise(self, value):
-        if torch.randint(0, 1, (1,)).item() == 0:
-            x_noised = value * 0.99
-            return x_noised, -0.01
-        else:
-            x_noised = value * 1.01
-            return x_noised, 0.01
+        # if torch.randint(0, 1, (1,)).item() == 0:
+        temp = value[:,self.element_idx]  * 0.0001
+        temp2 = value[:,self.element_idx] + temp
+        eps = temp2 - value[:,self.element_idx]
+        x_noised = value
+        x_noised[:,self.element_idx] += eps
+        # print(value)
+        # print(x_noised)
+        eps = eps.unsqueeze(1)
+        return x_noised, eps
+        # else:
+        #     x_noised = value * 1.01
+        #     return x_noised, 0.01
 
     def bonelength_encoder_test(self, beta, delta=None):
         x = self.calculate_mesh(beta)
@@ -273,17 +282,18 @@ class CVAE(nn.Module):
 
     def calculate_mesh(self, beta):
         _shape = [beta.shape[0]] + list(self.reference['shapeblendshape'].shape)
-        x = torch.zeros(_shape, device=self.device, dtype=torch.float32)
+        x = torch.zeros(_shape, device=beta.get_device(), dtype=torch.float32)
         for batch_idx in range(beta.shape[0]):
-            x[batch_idx] = beta[batch_idx, :] * self.reference['shapeblendshape']
+            x[batch_idx] = beta[batch_idx, :] * self.reference['shapeblendshape'].to(beta.get_device())
             # print(x.shape,self.reference['shapeblendshape'].shape)
-        x = torch.sum(x, -1) + self.reference['mesh_shape_pos']
+        x = torch.sum(x, -1)
+        x = x + self.reference['mesh_shape_pos'].to(x.get_device())
 
         return x
 
     # TODO: check batchsize
     def calculate_bonelength_both_from_mesh(self, v_mesh):
-        joints = torch.matmul(self.reference['jointregressor_matrix'], v_mesh)
+        joints = torch.matmul(self.reference['jointregressor_matrix'].to(v_mesh.get_device()), v_mesh)
         bone_length = self.calculate_bonelength_both(joints)  # 23
         bone_length = bone_length - 0.373924 * 2.67173
 
@@ -315,19 +325,24 @@ class CVAE(nn.Module):
     def jacobianer(self, mu_S, mu_B):
         _mu_B = torch.tensor(mu_B.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
         _mu_S = torch.tensor(mu_S.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
-        _z_S, eps_S = self.add_noise(_mu_S)
+
+        z_S, eps_S = self.add_noise(mu_S)
+        _z_S = torch.tensor(z_S.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
+        _eps_S = torch.tensor(eps_S.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
         generated_beta = self.decoder(_mu_B, _z_S)
         generated_mesh = self.calculate_mesh(generated_beta)
         generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
         _, _, mu_hat_B, _ = self.encode(generated_beta, generated_bonelength, IsUseOnlyMu=True)  # This is mu_hat
 
-        _z_B, eps_B = self.add_noise(_mu_B)
+        z_B, eps_B = self.add_noise(mu_B)
+        _z_B = torch.tensor(z_B.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
+        _eps_B = torch.tensor(eps_B.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
         generated_beta = self.decoder(_z_B, _mu_S)
         generated_mesh = self.calculate_mesh(generated_beta)
         generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
         _, mu_hat_S, _, _ = self.encode(generated_beta, generated_bonelength, IsUseOnlyMu=True)  # This is mu_hat
 
-        loss = torch.sum(((mu_hat_B - _mu_B) * eps_S).pow(2) + ((mu_hat_S - _mu_S) * eps_B).pow(2))
+        loss = torch.sum(((mu_hat_B - _mu_B) * _eps_S).pow(2) + ((mu_hat_S - _mu_S) * _eps_B).pow(2))
 
         return loss * JACOBIAN_LOSS_WEIGHT
 
@@ -395,18 +410,18 @@ def loss_wrapper(x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bone
     b_beta = 1
     mean, log_var = z_mu, z_var
     KLD = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
-    # RCL_x = F.mse_loss(x, reconstructed_x) * b_beta
+    RCL_x = F.mse_loss(x, reconstructed_x) * b_beta
     # RCL_x = 0
     RCL_bone = F.mse_loss(reconstructed_bonelength, bonelength) * b_beta
-    RCL_beta = F.mse_loss(reconstructed_beta, beta)
+    # RCL_beta = F.mse_loss(reconstructed_beta, beta)
 
     # loss = KLD + RCL_beta
-    loss = KLD + RCL_bone + RCL_beta
-    # loss = KLD + RCL_bone + RCL_x
+    # loss = KLD + RCL_bone + RCL_beta
+    loss = KLD + RCL_bone + RCL_x
     # loss = KLD + RCL_x + RCL_bone + RCL_beta
     # if task == 'train':
     #     print(KLD.item(), RCL_x.item(), RCL_bone.item())
-    return loss, {'KLD': KLD, 'RCL_bone': RCL_bone, 'RCL_beta': RCL_beta}
+    return loss, {'KLD': KLD, 'RCL_bone': RCL_bone, 'RCL_x': RCL_x}
 
 
 def loss_function(

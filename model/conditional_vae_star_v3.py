@@ -1,7 +1,14 @@
 ''' This code contains the implementation of conditional VAE
 https://github.com/graviraja/pytorch-sample-codes/blob/master/conditional_vae.py
 '''
+
+#https://github.com/pytorch/pytorch/issues/9158
+# GPU_NUM = 0,1 # 원하는 GPU 번호 입력
 import os
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3,4"
+GPU_VISIBLE_NUM = 2
+
 import sys
 import time
 import numpy as np
@@ -29,8 +36,10 @@ from demo.load_chumpy import extract_obj
 tm = time.localtime()
 stm = time.strftime('%Y_%m_%d_%H_%M_%S', tm)
 
-GPU_NUM = 4 # 원하는 GPU 번호 입력
-device = torch.device(f'cuda:{GPU_NUM}' if torch.cuda.is_available() else 'cpu')
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# device = torch.device(f'cuda' if torch.cuda.is_available() else 'cpu')
+# device = torch.device(f'cuda:{GPU_NUM}' if torch.cuda.is_available() else 'cpu')
 # print(f'device: {device}')
 # BATCH_SIZE = 64         # number of data points in each batch
 # TRAIN_SIZE = 64
@@ -128,24 +137,24 @@ def calculate_bonelength_loss(bonelength, reconstructed_bonelength, mean, log_va
     # return RCL
 
 
-def loss_wrapper(x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bonelength, beta, reconstructed_beta):
-    # loss = calculate_base_loss(x, reconstructed_x, z_mu, z_var)
-    b_beta = 1
-    mean, log_var = z_mu, z_var
-    KLD = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
-    RCL_x = F.mse_loss(x, reconstructed_x) * b_beta
-    RCL_bone = F.mse_loss(reconstructed_bonelength, bonelength) * b_beta
-    RCL_beta = F.mse_loss(reconstructed_beta, beta)
+# def loss_wrapper(x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bonelength, beta, reconstructed_beta):
+#     # loss = calculate_base_loss(x, reconstructed_x, z_mu, z_var)
+#     b_beta = 1
+#     mean, log_var = z_mu, z_var
+#     KLD = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
+#     RCL_x = F.mse_loss(x, reconstructed_x) * b_beta
+#     RCL_bone = F.mse_loss(reconstructed_bonelength, bonelength) * b_beta
+#     RCL_beta = F.mse_loss(reconstructed_beta, beta)
 
-    # loss = KLD + RCL_beta
-    #loss = KLD + RCL_bone + RCL_beta
-    # loss = KLD + RCL_bone + RCL_x
-    loss = KLD + RCL_x + RCL_bone + RCL_beta
-    # if task == 'train':
-    #     print(KLD.item(), RCL_x.item(), RCL_bone.item())
-    return loss
+#     # loss = KLD + RCL_beta
+#     #loss = KLD + RCL_bone + RCL_beta
+#     # loss = KLD + RCL_bone + RCL_x
+#     loss = KLD + RCL_x + RCL_bone + RCL_beta
+#     # if task == 'train':
+#     #     print(KLD.item(), RCL_x.item(), RCL_bone.item())
+#     return loss
 
-def weight_update(factor, target_network, network):
+def weight_interpolate(factor, target_network, network):
     for target_param, param in zip(target_network.parameters(), network.parameters()):
         # print(f'target/origin: {factor} {target_param.data.sum()} {param.data.sum()}')
         # print(f'before: {factor} {(param.data - target_param.data).sum()}')
@@ -153,7 +162,21 @@ def weight_update(factor, target_network, network):
         # print(f'target/origin: {factor} {target_param.data.sum()} {param.data.sum()}')
         # print(f'after : {factor} {(param.data - target_param.data).sum()}')
 
-def train(model,model_jacobian,train_iterator,optimizer,optimizer_jacobian):
+def weight_add(percent, target_network, network):
+    for target_param, param in zip(target_network.parameters(), network.parameters()):
+        # print(f'target/origin: {factor} {target_param.data.sum()} {param.data.sum()}')
+        # print(f'before: {factor} {(param.data - target_param.data).sum()}')
+        target_param.data.copy_(param.data * percent + target_param.data)
+        # print(f'target/origin: {factor} {target_param.data.sum()} {param.data.sum()}')
+        # print(f'after : {factor} {(param.data - target_param.data).sum()}')
+
+def weight_self_divide(percent, target_network):
+    for target_param in target_network.parameters():
+        # print(f'target/origin: {factor} {target_param.data.sum()} {param.data.sum()}')
+        # print(f'before: {factor} {(param.data - target_param.data).sum()}')
+        target_param.data.copy_(target_param.data * percent)
+
+def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jacobian):
     global generated_beta_list, generated_bonelength_list, task
     task = 'train'
     # set the train mode
@@ -169,7 +192,9 @@ def train(model,model_jacobian,train_iterator,optimizer,optimizer_jacobian):
     optimizer_jacobian.zero_grad()
 
     for i, (beta, bonelength) in enumerate(train_iterator):
-        print(i)
+        # print(i)
+        beta = beta.to(device)
+        bonelength = bonelength.to(device)
         # reshape the data into [batch_size, 784]
         # print(x.shape)
         # x = x.view(-1, INPUT_DIM)
@@ -178,7 +203,7 @@ def train(model,model_jacobian,train_iterator,optimizer,optimizer_jacobian):
         # y = y.view(-1, N_CLASSES)
         # bonelength = bonelength.to(device)
 
-        weight_update(1.0, model_jacobian, model)
+        weight_interpolate(1.0, model_temp, model)
         # forward pass
         # loss
         generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh = model(beta, bonelength)
@@ -195,20 +220,16 @@ def train(model,model_jacobian,train_iterator,optimizer,optimizer_jacobian):
                                 training_bias=training_bias,
                                 BATCH_SIZE=BATCH_SIZE, device=device)
 
-        loss_jacobian = model_jacobian(beta=None, bonelength=None, mu_S=mu_Style, mu_B=bonelength_reduced)
         loss_a, sublosses, L_covarpen = loss_func_output
         
         # backward pass
         loss_a.backward()
-        loss_jacobian.backward()
         train_loss += loss_a.item()
-        train_loss += loss_jacobian.item()
 
-        losses['KLD'] += sublosses['KLD'].item() * 0.5
-        losses['RCL_bone'] += sublosses['RCL_bone'].item() * 0.5
-        losses['RCL_beta'] += sublosses['RCL_beta'].item() * 0.5
-        losses['Cov'] += L_covarpen.item() * 0.5
-        losses['Jac'] += loss_jacobian.item() * 0.5
+        losses['KLD'] += sublosses['KLD'].item()
+        losses['RCL_bone'] += sublosses['RCL_bone'].item()
+        losses['RCL_x'] += sublosses['RCL_x'].item()
+        losses['Cov'] += L_covarpen.item()
 
         # update the weights
         optimizer.step()
@@ -217,15 +238,25 @@ def train(model,model_jacobian,train_iterator,optimizer,optimizer_jacobian):
         
         # update the gradients to zero
         optimizer.zero_grad()
-        optimizer_jacobian.zero_grad()
-        weight_update(0.5, model, model_jacobian)
+
+
+        for i in range(10):
+            weight_interpolate(1.0, model_jacobian, model_temp)
+            loss_jacobian = model_jacobian(beta=None, bonelength=None, mu_S=mu_Style, mu_B=bonelength_reduced, element_idx=i)
+            loss_jacobian.backward()
+            train_loss += loss_jacobian.item()
+            losses['Jac'] += loss_jacobian.item()
+            optimizer_jacobian.zero_grad()
+            weight_add(1.0, model, model_jacobian)
+        
+        weight_add(-10.0, model, model_temp)
 
     
-    train_loss =  train_loss * 0.5
+    train_loss =  train_loss
     return train_loss, losses
 
 
-def test(model,model_jacobian,test_iterator,IsNeedSave=False):
+def test(model,model_jacobian,model_temp,test_iterator,IsNeedSave=False):
     global generated_beta_list, generated_bonelength_list, task
     task = 'test'
     # set the evaluation mode
@@ -261,21 +292,23 @@ def test(model,model_jacobian,test_iterator,IsNeedSave=False):
                                     training_bias=training_bias,
                                     BATCH_SIZE=BATCH_SIZE, device=device)
 
-            loss_jacobian = model_jacobian(beta=None, bonelength=None, mu_S=mu_Style, mu_B=bonelength_reduced)
             
             loss_a, sublosses, L_covarpen = loss_func_output
             
             test_loss += loss_a.item()
-            test_loss += loss_jacobian.item()
 
-            losses['KLD'] += sublosses['KLD'].item() * 0.5
-            losses['RCL_bone'] += sublosses['RCL_bone'].item() * 0.5
-            losses['RCL_beta'] += sublosses['RCL_beta'].item() * 0.5
-            losses['Cov'] += L_covarpen.item() * 0.5
-            losses['Jac'] += loss_jacobian.item() * 0.5
+            losses['KLD'] += sublosses['KLD'].item()
+            losses['RCL_bone'] += sublosses['RCL_bone'].item()
+            losses['RCL_x'] += sublosses['RCL_x'].item()
+            losses['Cov'] += L_covarpen.item()
+
+            for i in range(10):
+                loss_jacobian = model_jacobian(beta=None, bonelength=None, mu_S=mu_Style, mu_B=bonelength_reduced)
+                test_loss += loss_jacobian.item()
+                losses['Jac'] += loss_jacobian.item()
 
             
-    test_loss =  test_loss * 0.5
+    test_loss =  test_loss
     return test_loss, losses
 
 """
@@ -343,15 +376,15 @@ def load_trained_model(model, model_jacobian, _dataset, _iterator):
     # plt.show()
 
 
-def save_trained_model(model, model_jacobian, train_dataset, test_dataset, train_iterator, test_iterator, optimizer, optimizer_jacobian, scheduler, scheduler_jacobian):
+def save_trained_model(model, model_jacobian, model_temp,train_dataset, test_dataset, train_iterator, test_iterator, optimizer, optimizer_jacobian, scheduler, scheduler_jacobian):
     global e
     e = 0
     best_test_loss = float('inf')
     example_images = []
 
     for e in range(N_EPOCHS):
-        train_loss, train_losses = train(model, model_jacobian, train_iterator, optimizer, optimizer_jacobian)
-        test_loss,test_losses = test(model, model_jacobian, test_iterator)
+        train_loss, train_losses = train(model, model_jacobian, model_temp, train_iterator, optimizer, optimizer_jacobian)
+        test_loss,test_losses = test(model, model_jacobian, model_temp, test_iterator)
 
         train_loss /= len(train_dataset)
         test_loss /= len(test_dataset)
@@ -362,11 +395,11 @@ def save_trained_model(model, model_jacobian, train_dataset, test_dataset, train
                     'test_Jac': test_losses['Jac']/len(test_dataset),
                     'train_KLD': train_losses['KLD']/len(train_dataset),
                     'train_RCL_bone': train_losses['RCL_bone']/len(train_dataset),
-                    'train_RCL_beta': train_losses['RCL_beta']/len(train_dataset),
+                    'train_RCL_beta': train_losses['RCL_x']/len(train_dataset),
                     'train_Cov': train_losses['Cov']/len(train_dataset),
                     'test_KLD': test_losses['KLD']/len(test_dataset),
                     'test_RCL_bone': test_losses['RCL_bone']/len(test_dataset),
-                    'test_RCL_beta': test_losses['RCL_beta']/len(test_dataset),
+                    'test_RCL_beta': test_losses['RCL_x']/len(test_dataset),
                     'test_Cov': test_losses['Cov']/len(test_dataset)
                     }
         wandb.log(metrics)
@@ -413,7 +446,7 @@ def transformation():
     return transform
 
 #https://sanghyu.tistory.com/19
-def load_reference(path='./data/reference.npz',device=None) -> dict:
+def load_reference(path='./data/reference.npz') -> dict:
     """Example function with PEP 484 type annotations.
 
     Args:
@@ -424,7 +457,7 @@ def load_reference(path='./data/reference.npz',device=None) -> dict:
 
     """
     sample = np.load(path, allow_pickle=True)
-    ret = {key: torch.tensor(sample[key],dtype=torch.float32,device=device) for key in sample}
+    ret = {key: torch.tensor(sample[key],dtype=torch.float32) for key in sample}
     return ret
 
 def setup_trained_model():
@@ -445,21 +478,21 @@ def setup_trained_model():
     train_dataset = StarBetaBoneLengthDataset(
         path='./data/train.npz',
         transform=transform,
-        device=device,
+        device=None,
         debug=TRAIN_SIZE
     )
 
     test_dataset = StarBetaBoneLengthDataset(
         path='./data/test.npz',
         transform=transform,
-        device=device,
+        device=None,
         debug=TEST_SIZE
     )
 
     validation_dataset = StarBetaBoneLengthDataset(
         path='./data/validation.npz',
         transform=transform,
-        device=device,
+        device=None,
         debug=TEST_SIZE
     )
 
@@ -468,10 +501,25 @@ def setup_trained_model():
     validation_dataset = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
 
 
-    reference = load_reference(device=device)
-    model = md.CVAE(reference=reference, BATCH_SIZE=BATCH_SIZE, device=device).to(device)
+    reference = load_reference()
+    # model = md.CVAE(reference=reference, BATCH_SIZE=BATCH_SIZE, device=device).to(device)
+    # model_jacobian = md.CVAE(reference=reference, BATCH_SIZE=BATCH_SIZE, device=device, IsSupporter=True).to(device)
+    model = md.CVAE(reference=reference, BATCH_SIZE=BATCH_SIZE, device=device)
+    model_jacobian = md.CVAE(reference=reference, BATCH_SIZE=BATCH_SIZE, device=device, IsSupporter=True)
+    model_temp = md.CVAE(reference=reference, BATCH_SIZE=BATCH_SIZE, device=device, IsSupporter=True)
+
+    # if GPU_VISIBLE_NUM > 1:
+    #     print("Let's use", GPU_VISIBLE_NUM, "GPUs!")
+    #     # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
+    #     model = nn.DataParallel(model)
+    #     model_jacobian = nn.DataParallel(model_jacobian)
+
+
+    model.to(device)
+    model_jacobian.to(device)
+    model_temp.to(device)
+
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    model_jacobian = md.CVAE(reference=reference, BATCH_SIZE=BATCH_SIZE, device=device, IsSupporter=True).to(device)
     optimizer_jacobian = optim.Adam(model.parameters(), lr=lr)
     #http://www.gisdeveloper.co.kr/?p=8443
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
@@ -481,7 +529,7 @@ def setup_trained_model():
         #sort, dnn style, load data, input/loss, version
         wandb.init(project="STARVAE-7-with-Cov-Jac")
         wandb.watch(model)
-        save_trained_model(model, model_jacobian, train_dataset, test_dataset, train_iterator, test_iterator, optimizer, optimizer_jacobian, scheduler, scheduler_jacobian)
+        save_trained_model(model, model_jacobian, model_temp, train_dataset, test_dataset, train_iterator, test_iterator, optimizer, optimizer_jacobian, scheduler, scheduler_jacobian)
     else:
         load_trained_model(model, model_jacobian, train_dataset, train_iterator)
 
