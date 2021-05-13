@@ -51,7 +51,7 @@ BETA_4 = 50.0
 CUDA = torch.cuda.is_available()
 
 GAMMA = 10.0
-JACOBIAN_LOSS_WEIGHT = 5.0
+JACOBIAN_LOSS_WEIGHT = 0.001
 LAMBDA_INTRA_GROUP_ON_DIAG = 0.00  # Note these two are present in the prior matcher
 LAMBDA_INTRA_GROUP_OFF_DIAG = 0.00
 BETA = (  ## Collection of KL divergence loss weights ##
@@ -131,7 +131,7 @@ class Encoder(nn.Module):
 
 # TODO: change 10 to other value
 class Decoder(nn.Module):
-    def __init__(self, NUM_LAYER, device):
+    def __init__(self, NUM_LAYER):
         super(self.__class__, self).__init__()
         self.NUM_LAYER = NUM_LAYER
         mlp_blocks, last_block = NUM_LAYER.get_blocks()
@@ -139,7 +139,7 @@ class Decoder(nn.Module):
         self.dec_image = nn.Sequential(*blocks)
 
     def forward(self, value, z):
-        z_cat = torch.cat((z, value), dim=1)
+        z_cat = torch.cat((z, value.to(z.get_device())), dim=1)
         if z_cat.shape[0] == 1:
             z_cat = torch.cat((z_cat, z_cat), dim=0)
         beta_reconstructed = self.dec_image(z_cat)
@@ -147,7 +147,7 @@ class Decoder(nn.Module):
 
 
 class CVAE(nn.Module):
-    def __init__(self, reference, BATCH_SIZE, device, IsSupporter=False, IsA=True,
+    def __init__(self, BATCH_SIZE, IsSupporter=False, IsA=True,
                  NUM_ENCODER_STLYE=NUM_STYLE,
                  NUM_ENCODER_BONELENGTH=NUM_BONELENGTH,
                  NUM_DECODER_ALL=NUM_DECODER):
@@ -156,14 +156,11 @@ class CVAE(nn.Module):
         self.NUM_ENCODER_BONELENGTH = NUM_ENCODER_BONELENGTH
         self.NUM_DECODER_ALL = NUM_DECODER_ALL
         self.BATCH_SIZE = BATCH_SIZE
-        self.device = device
         self.encoderStyle = Encoder(self.NUM_ENCODER_STLYE, IsUseOnlyMu=False)
         self.encoderBonelength = Encoder(self.NUM_ENCODER_BONELENGTH, IsUseOnlyMu=True)
-        self.decoder = Decoder(self.NUM_DECODER_ALL, device=device)
-        self.reference = reference
+        self.decoder = Decoder(self.NUM_DECODER_ALL)
         self.IsSupporter = IsSupporter
         self.IsA = IsA
-        self.element_idx = None
 
     def encode(self, beta, bonelength, IsUseOnlyMu=None):
         mesh = self.calculate_mesh(beta)
@@ -175,47 +172,12 @@ class CVAE(nn.Module):
             bonelength_reduced = self.encoderBonelength(bonelength)
             return None, bonelength_reduced, mu_output, None
         else:
+            # print(f'mesh_flatten:{mesh_flatten.shape}')
             mu_output, std_output = self.encoderStyle(mesh_flatten,
                                                       IsUseOnlyMu=IsUseOnlyMu)  # output is q_style or mu_style
+            # print(f'mu_output:{mu_output.shape}\nstd_output:{std_output.shape}')
             bonelength_reduced = self.encoderBonelength(bonelength)
             return std_output, bonelength_reduced, mu_output, mesh
-
-    def set_save_value(self, value, IsMu_B):
-        self.temp_value = torch.unsqueeze(torch.tensor(value, dtype=torch.float32, device=self.device), 0)
-        self.IsMu_B = IsMu_B
-
-    # def forward_for_jacobian(self, value):
-    #     assert (self.temp_value is not None), "You should use 'set_save_value' first"
-
-    #     if self.IsMu_B:
-    #         value = torch.unsqueeze(value, 0)
-    #         value.requires_grad_(True)
-    #         value.retain_grad()
-    #         generated_beta = self.decoder(value, self.temp_value)
-    #         generated_mesh = self.calculate_mesh(generated_beta)
-    #         generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
-    #         _, mu_hat_S, mu_hat_B, _ = self.encode(generated_beta, generated_bonelength,
-    #                                                IsUseOnlyMu=True)  # This is mu_hat
-    #         mu_hat_S_ = mu_hat_S[0, :]
-    #         mu_hat_S_.requires_grad_(True)
-    #         mu_hat_S_.retain_grad()
-    #         return mu_hat_S_
-
-    #     else:
-    #         value = torch.unsqueeze(value, 0)
-    #         value.requires_grad_(True)
-    #         value.retain_grad()
-    #         generated_beta = self.decoder(self.temp_value, value)
-    #         generated_mesh = self.calculate_mesh(generated_beta)
-    #         generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
-    #         _, mu_hat_S, mu_hat_B, _ = self.encode(generated_beta, generated_bonelength,
-    #                                                IsUseOnlyMu=True)  # This is mu_hat
-    #         mu_hat_B_ = mu_hat_S[0, :]
-    #         mu_hat_B_.requires_grad_(True)
-    #         mu_hat_B_.retain_grad()
-    #         return mu_hat_B_
-
-    #     self.temp_value = None
 
     def forward_main(self, beta, bonelength):
         ##encode
@@ -227,12 +189,22 @@ class CVAE(nn.Module):
         generated_mesh = self.calculate_mesh(generated_beta)
         generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
         # Loss_Jacobian = self.jacobianer(mu_S=mu_Style,mu_B=bonelength_reduced)
+        # print(generated_beta.shape, generated_bonelength.shape, mu_Style.shape, std_Style.shape, bonelength_reduced.shape, mesh.shape, generated_mesh.shape)
         return generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh
 
     def forward_supporter(self, mu_S, mu_B):
         return self.jacobianer(mu_S, mu_B)
 
-    def forward(self, beta, bonelength, mu_S=None, mu_B=None, element_idx=None):
+    def forward(self, 
+                beta,
+                bonelength,
+                shapeblendshape, 
+                mesh_shape_pos, 
+                jointregressor_matrix,
+                mu_S=None, mu_B=None, element_idx=None):
+        self.shapeblendshape = shapeblendshape
+        self.mesh_shape_pos = mesh_shape_pos
+        self.jointregressor_matrix = jointregressor_matrix
         if self.IsSupporter is False:
             return self.forward_main(beta=beta, bonelength=bonelength)
         else:
@@ -253,14 +225,22 @@ class CVAE(nn.Module):
 
     def add_noise(self, value):
         # if torch.randint(0, 1, (1,)).item() == 0:
-        temp = value[:,self.element_idx]  * 0.0001
-        temp2 = value[:,self.element_idx] + temp
-        eps = temp2 - value[:,self.element_idx]
-        x_noised = value
-        x_noised[:,self.element_idx] += eps
-        # print(value)
-        # print(x_noised)
-        eps = eps.unsqueeze(1)
+        eeps = torch.zeros(value.shape,dtype=torch.float32,device=value.get_device())
+        e_temp = torch.ones(value.shape,dtype=torch.float32,device=value.get_device())
+        eeps[:,self.element_idx] = 0.0001
+        e_temp[:,self.element_idx] = 0
+        _eps = value * eeps
+        temp2 = value + _eps
+
+        _eps = temp2 - value
+        temp2 = value + _eps
+        # _eps = _eps.unsqueeze(1)
+
+        x_noised = torch.tensor(temp2.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=value.get_device())
+
+        _eps = torch.abs(_eps[:,self.element_idx].unsqueeze(1))
+        eps = torch.tensor(_eps.repeat(1, value.shape[1]).cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=value.get_device())
+        # eps = torch.tensor(_eps[:,self.element_idx].unsqueeze(1).cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=value.get_device())
         return x_noised, eps
         # else:
         #     x_noised = value * 1.01
@@ -281,19 +261,19 @@ class CVAE(nn.Module):
         return None, None, z_mu, z_var, z, None
 
     def calculate_mesh(self, beta):
-        _shape = [beta.shape[0]] + list(self.reference['shapeblendshape'].shape)
+        _shape = list(self.shapeblendshape.shape)
         x = torch.zeros(_shape, device=beta.get_device(), dtype=torch.float32)
         for batch_idx in range(beta.shape[0]):
-            x[batch_idx] = beta[batch_idx, :] * self.reference['shapeblendshape'].to(beta.get_device())
+            x[batch_idx] = beta[batch_idx, :] * self.shapeblendshape[batch_idx, :]
             # print(x.shape,self.reference['shapeblendshape'].shape)
         x = torch.sum(x, -1)
-        x = x + self.reference['mesh_shape_pos'].to(x.get_device())
+        x = x + self.mesh_shape_pos
 
         return x
 
     # TODO: check batchsize
     def calculate_bonelength_both_from_mesh(self, v_mesh):
-        joints = torch.matmul(self.reference['jointregressor_matrix'].to(v_mesh.get_device()), v_mesh)
+        joints = torch.matmul(self.jointregressor_matrix, v_mesh)
         bone_length = self.calculate_bonelength_both(joints)  # 23
         bone_length = bone_length - 0.373924 * 2.67173
 
@@ -312,9 +292,9 @@ class CVAE(nn.Module):
                              second_idx_list=[1, 4, 7, 10, 3, 6, 9, 13, 16, 18, 20, 22, 12, 15],
                              offset=3):
         local_size = len(first_idx_list)
-        bonelength_list = torch.zeros([vertex_list.shape[0], local_size], device=self.device)
-        vertex_list_first = torch.index_select(vertex_list, 1, torch.tensor(first_idx_list, device=self.device))
-        vertex_list_second = torch.index_select(vertex_list, 1, torch.tensor(second_idx_list, device=self.device))
+        bonelength_list = torch.zeros([vertex_list.shape[0], local_size], device=vertex_list.get_device())
+        vertex_list_first = torch.index_select(vertex_list, 1, torch.tensor(first_idx_list, device=vertex_list.get_device()))
+        vertex_list_second = torch.index_select(vertex_list, 1, torch.tensor(second_idx_list, device=vertex_list.get_device()))
 
         temp = vertex_list_first - vertex_list_second
         bonelength_list = torch.norm(temp, dim=2)
@@ -323,81 +303,26 @@ class CVAE(nn.Module):
         return bonelength_list
 
     def jacobianer(self, mu_S, mu_B):
-        _mu_B = torch.tensor(mu_B.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
-        _mu_S = torch.tensor(mu_S.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
+        _mu_B = torch.tensor(mu_B.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=mu_B.get_device())
+        _mu_S = torch.tensor(mu_S.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=mu_S.get_device())
 
-        z_S, eps_S = self.add_noise(mu_S)
-        _z_S = torch.tensor(z_S.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
-        _eps_S = torch.tensor(eps_S.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
+        _z_S, _eps_S = self.add_noise(mu_S)
+        # _z_S = torch.tensor(z_S.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
+        # _eps_S = torch.tensor(eps_S.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
         generated_beta = self.decoder(_mu_B, _z_S)
         generated_mesh = self.calculate_mesh(generated_beta)
         generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
         _, _, mu_hat_B, _ = self.encode(generated_beta, generated_bonelength, IsUseOnlyMu=True)  # This is mu_hat
 
-        z_B, eps_B = self.add_noise(mu_B)
-        _z_B = torch.tensor(z_B.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
-        _eps_B = torch.tensor(eps_B.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
+        _z_B, _eps_B = self.add_noise(mu_B)
+        # _z_B = torch.tensor(z_B.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
+        # _eps_B = torch.tensor(eps_B.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
         generated_beta = self.decoder(_z_B, _mu_S)
         generated_mesh = self.calculate_mesh(generated_beta)
         generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
         _, mu_hat_S, _, _ = self.encode(generated_beta, generated_bonelength, IsUseOnlyMu=True)  # This is mu_hat
 
-        loss = torch.sum(((mu_hat_B - _mu_B) * _eps_B).pow(2) + ((mu_hat_S - _mu_S) * _eps_S).pow(2))
-
-        return loss * JACOBIAN_LOSS_WEIGHT
-
-        # for k in range(self.BATCH_SIZE):
-        #     # # This is the funtion passed as an argument to the differentiation operator
-        #     _mu_B = torch.tensor(mu_B.cpu().data.numpy()[k,:], dtype=torch.float32, requires_grad=True, device=self.device)
-        #     _mu_S = torch.tensor(mu_S.cpu().data.numpy()[k,:], dtype=torch.float32, requires_grad=True, device=self.device)
-
-        #     self.set_save_value(_mu_B,IsMu_B=True)
-        #     jacobian_S_by_B = torch.autograd.functional.jacobian(self.forward_for_jacobian, _mu_S, create_graph=True)
-
-        #     self.set_save_value(_mu_S,IsMu_B=False)
-        #     jacobian_B_by_S  = torch.autograd.functional.jacobian(self.forward_for_jacobian, _mu_B, create_graph=True)
-
-        #     # return JacobianPenalty = torch.sum(jacobian_B_by_S)
-        #     return jacobian_B_by_S.pow(2).mean(dim=0).sum()
-
-    #     _mu_B = torch.tensor(mu_B.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
-    #     _mu_S = torch.tensor(mu_S.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
-    #     generated_beta = self.decoder(_mu_B, _mu_S)
-    #     generated_mesh = self.calculate_mesh(generated_beta)
-    #     generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
-    #     _, mu_hat_S, mu_hat_B, _ = self.encode(generated_beta, generated_bonelength, IsUseOnlyMu=True)  # This is mu_hat
-    #     # print(type(mu_hat_S),type(mu_hat_B),type(mu_S),type(mu_B))
-
-    #     # We need to keep the graph around since we will use it in the loss function
-    #     # -- Jacobian dhatzE/dzI -- #
-    #     jacobian_S_by_B = self.jacobian(inputs=_mu_B, output=mu_hat_S)
-    #     # -- Jacobian dhatzI/dzE -- #
-    #     jacobian_B_by_S = self.jacobian(inputs=_mu_S, output=mu_hat_B)
-    #     # Compute the squared Frobenius norms of the Jacobians
-    #     jacobian_dSdB = jacobian_S_by_B.pow(2).mean(dim=0).sum()
-    #     jacobian_dBdS = jacobian_B_by_S.pow(2).mean(dim=0).sum()
-    #     # Final penalty
-    #     JacobianPenalty = torch.max(jacobian_dSdB, jacobian_dBdS)
-    #     return JacobianPenalty * JACOBIAN_LOSS_WEIGHT
-
-    # def jacobian(self, inputs, output):
-    #     assert inputs.requires_grad
-    #     B, n = output.shape
-    #     J = torch.zeros(n, *inputs.size()).to(self.device)  # n x B x m
-    #     grad_output = torch.zeros(*output.size()).to(self.device)  # B x n
-
-    #     for i in range(n):
-    #         #original
-    #         zero_gradients(inputs)
-    #         grad_output.zero_()
-    #         grad_output[:, i] = 1  # Across the batch, for one output
-    #         output.backward(grad_output, create_graph=True)
-    #         J[i] = inputs.grad
-
-    #     # Cleanup
-    #     zero_gradients(inputs)
-    #     grad_output.zero_()
-    #     return torch.transpose(J, dim0=0, dim1=1)  # B x n x m
+        return _mu_S, _mu_B, mu_hat_S, mu_hat_B, _eps_S, _eps_B
 
 
 def likelihood_loss(X_hat, X):
@@ -407,24 +332,19 @@ def likelihood_loss(X_hat, X):
 
 def loss_wrapper(x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bonelength, beta, reconstructed_beta):
     # loss = calculate_base_loss(x, reconstructed_x, z_mu, z_var)
-    b_beta = 1
+    b_beta = 5.0
+    regular = 100.0
     mean, log_var = z_mu, z_var
     KLD = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
-    RCL_x = F.mse_loss(x, reconstructed_x) * b_beta
-    # RCL_x = 0
-    RCL_bone = F.mse_loss(reconstructed_bonelength, bonelength) * b_beta
+    RCL_x = F.mse_loss(x, reconstructed_x) * b_beta * regular
+    RCL_bone = F.mse_loss(reconstructed_bonelength, bonelength) * regular
     # RCL_beta = F.mse_loss(reconstructed_beta, beta)
 
-    # loss = KLD + RCL_beta
-    # loss = KLD + RCL_bone + RCL_beta
     loss = KLD + RCL_bone + RCL_x
-    # loss = KLD + RCL_x + RCL_bone + RCL_beta
-    # if task == 'train':
-    #     print(KLD.item(), RCL_x.item(), RCL_bone.item())
     return loss, {'KLD': KLD, 'RCL_bone': RCL_bone, 'RCL_x': RCL_x}
 
 
-def loss_function(
+def loss_func_basic(
         model,
         ### Input AE latent vector and predicted output ###
         X,  # Deterministically encoded latent point cloud
@@ -481,26 +401,27 @@ def loss_function(
     total_loss = (L_base
                   + L_covarpen)
 
-    #### Indiv Loss terms ####
-    # ------------------------#
-    # term_set = [
-    #         # HFVAE terms from the KL divergence
-    #         # ELBO_TERMS =
-    #         #     log_likelihood:  (1) + (3),
-    #         #     intra-group TCs: (i),
-    #         #     dimwise KL-div:  (ii),
-    #         #     MI(x, z):        (2),
-    #         #     TC(z):           (A),
-    #         #     T_5: semi-sup term 1
-    #         #     T_6: semi-sup term 2
-    #         indiv_terms[0], indiv_terms[1], indiv_terms[2], indiv_terms[3], indiv_terms[4],
-    #         onDiagPen, offDiagPen, interPen, # Covariance penalty terms
-    #         jacobian_dSdB, jacobian_dBdS
-    # ]
-    term_names = [
-        'log-likelihood', 'Intra-TC', 'DimWise-KL', 'MI(x,z)', 'Inter-TC',
-        'ON-DIAG', 'OFF-DIAG', 'INTER-COVAR',
-        'EwrtI_jacobian', 'IwrtE_jacobian'
-    ]
-    # print(L_covarpen.item())
     return total_loss, term_set, L_covarpen
+
+
+def loss_func_jacobian(_mu_S, _mu_B, mu_hat_S, mu_hat_B, _eps_S, _eps_B, BATCH_SIZE):
+    loss = torch.sum(
+        (torch.div((mu_hat_B - _mu_B),_eps_B)).pow(2) + 
+        (torch.div((mu_hat_S - _mu_S),_eps_S)).pow(2)
+        )
+    loss /= (torch.numel(_mu_B) + torch.numel(_mu_S) * BATCH_SIZE)
+
+    return loss * JACOBIAN_LOSS_WEIGHT
+
+
+#https://discuss.pytorch.org/t/pixelwise-weights-for-mseloss/1254/2
+def weighted_mse_loss(input,target,weights):
+    out = (input-target)**2
+    weights = torch.ones(out.shape, dtype=torch.float32)
+    for i in range(1, 11):
+        weights[:, i-1] += 3.0/float(i)
+    # out = out * weights.expand_as(out)
+    #print(f'{out.shape}\n{weights.shape}')
+    out = out * weights
+    loss = torch.sum(out) # or sum over whatever dimensions
+    return loss
