@@ -4,12 +4,13 @@ from scipy.stats import norm
 import torch
 import torch.nn as nn
 from torch.nn import Parameter
-import sys
-sys.path.append('../')
-import probtorch
-from probtorch.util import expand_inputs
 from tasp.MarginalObjectives import elbo
 from torch.autograd.gradcheck import zero_gradients
+import sys
+sys.path.append('../')
+sys.path.append('../../')
+from probtorch.probtorch.util import expand_inputs
+import probtorch.probtorch as probtorch
 
 
 print('probtorch:', probtorch.__version__,
@@ -343,13 +344,13 @@ def loss_function(
 ):
     # Assign the loss to the decoder distribution
     # The MSE loss corresponds to a Gaussian continuous output under log-likelihood
-    p.loss(likelihood_loss, X_hat, X, name='x')
+    p.loss(likelihood_loss, X_hat.unsqueeze(0), X.unsqueeze(0), name='x')
     # Hierarchically factorized ELBO function
-    # hfelbo = lambda q, p: elbo(q, p, sample_dim=0, batch_dim=1, alpha=0.0, beta=BETA,
-    #                            bias=training_bias, size_average=True, reduce=True)
-    # L_hfvae, indiv_terms = hfelbo(q, p) # Minimize the negative elbo as a loss
-    # L_hfvae = -L_hfvae
-    L_hfvae = 0
+    hfelbo = lambda q, p: elbo(q, p, sample_dim=0, batch_dim=1, alpha=0.0, beta=BETA,
+                               bias=training_bias, size_average=True, reduce=True)
+    L_hfvae, indiv_terms = hfelbo(q, p) # Minimize the negative elbo as a loss
+    L_hfvae = -L_hfvae
+    # L_hfvae = 0
 
 
     #### Covariance penalty for disentanglement ####
