@@ -6,8 +6,8 @@ https://github.com/graviraja/pytorch-sample-codes/blob/master/conditional_vae.py
 # GPU_NUM = 0,1 # 원하는 GPU 번호 입력
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "3,4"
-GPU_VISIBLE_NUM = 2
+os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+GPU_VISIBLE_NUM = 1
 
 import sys
 import time
@@ -25,7 +25,7 @@ from torchvision import datasets, transforms
 
 import matplotlib.pyplot as plt
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
-from utils.datasets_v4 import StarBetaBoneLengthDataset, Normalize
+from utils.datasets_v4_smpl import StarBetaBoneLengthDataset, Normalize
 import modelprob4 as md
 
 #https://greeksharifa.github.io/references/2020/06/10/wandb-usage/
@@ -47,10 +47,10 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # device = torch.device(f'cuda:{GPU_NUM}' if torch.cuda.is_available() else 'cpu')
 # print(f'device: {device}')
 # BATCH_SIZE = 64         # number of data points in each batch
-TRAIN_SIZE = 64
-TEST_SIZE = 64
-# TRAIN_SIZE = 2048
-# TEST_SIZE = 512
+# TRAIN_SIZE = 64
+# TEST_SIZE = 64
+TRAIN_SIZE = 4096
+TEST_SIZE = 1024
 BATCH_SIZE = 32         # number of data points in each batch
 N_EPOCHS = 100           # times to run the model on complete data
 INPUT_DIM_MESH = 6890*3     # size of each input
@@ -167,7 +167,7 @@ def concat_temp2(val):
 
 
 def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jacobian):
-    global generated_beta_list, generated_bonelength_list, task
+    global generated_beta_list, generated_bonelength_list, task, generated_beta_list
     task = 'train'
     # set the train mode
     model.train()
@@ -175,17 +175,16 @@ def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jac
 
     # loss of the epoch
     train_loss = 0
-    losses = {'KLD':0.0,'RCL_bone':0.0,'RCL_x':0.0,'Cov':0.0,'Jac':0.0}
+    losses = {'KLD':0.0,'RCL_bone':0.0,'RCL_x':0.0,'Cov':0.0,'Jac':0.0,'RCL_beta':0.0}
     training_bias = (TRAIN_SIZE - 1) / (BATCH_SIZE - 1)
     
     optimizer.zero_grad()
     optimizer_jacobian.zero_grad()
 
     #TODO:fix it -> parallel gpu 사용시 할당되는 .to(device)를 조절해야하므로 constant 참고값도 불러온다
-    for i, (beta, bonelength, shapeblendshape, mesh_shape_pos, jointregressor_matrix) in enumerate(train_iterator):
+    for i, (beta, shapeblendshape, mesh_shape_pos, jointregressor_matrix) in enumerate(train_iterator):
         print(i)
         beta = beta.to(device)
-        bonelength = bonelength.to(device)
         shapeblendshape = shapeblendshape.to(device)
         mesh_shape_pos = mesh_shape_pos.to(device)
         jointregressor_matrix = jointregressor_matrix.to(device)
@@ -195,13 +194,13 @@ def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jac
         # forward pass
         # loss
         output = model(beta=beta, 
-                        # bonelength=bonelength, 
+                        bonelength=None, 
                         shapeblendshape=shapeblendshape, 
                         mesh_shape_pos=mesh_shape_pos, 
                         jointregressor_matrix=jointregressor_matrix)
         
         # generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh = concat_temp1(output)
-        generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh, z_Style = output
+        generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh, z_Style, bonelength = output
 
         if e == N_EPOCHS-1 and i == 0:
             generated_beta_list += [[beta, generated_beta]]
@@ -225,6 +224,7 @@ def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jac
         losses['KLD'] += sublosses['KLD'].item()
         losses['RCL_bone'] += sublosses['RCL_bone'].item()
         losses['RCL_x'] += sublosses['RCL_x'].item()
+        losses['RCL_beta'] += sublosses['RCL_beta'].item()
         losses['Cov'] += L_covarpen.item()
 
         # update the weights
@@ -234,49 +234,49 @@ def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jac
         optimizer.zero_grad()
 
 
-        shapeblendshape = shapeblendshape.to(device)
-        mesh_shape_pos = mesh_shape_pos.to(device)
-        jointregressor_matrix = jointregressor_matrix.to(device)
-        z_Style = z_Style.to(device)
-        bonelength_reduced = bonelength_reduced.to(device)
-        output = model_jacobian(beta=None, 
-                                bonelength=None, 
-                                shapeblendshape=shapeblendshape, 
-                                mesh_shape_pos=mesh_shape_pos, 
-                                jointregressor_matrix=jointregressor_matrix,
-                                mu_S=z_Style, mu_B=bonelength_reduced, 
-                                element_idx=-1)
-        mu_S, mu_B = output
+        # shapeblendshape = shapeblendshape.to(device)
+        # mesh_shape_pos = mesh_shape_pos.to(device)
+        # jointregressor_matrix = jointregressor_matrix.to(device)
+        # z_Style = z_Style.to(device)
+        # bonelength_reduced = bonelength_reduced.to(device)
+        # output = model_jacobian(beta=None, 
+        #                         bonelength=None, 
+        #                         shapeblendshape=shapeblendshape, 
+        #                         mesh_shape_pos=mesh_shape_pos, 
+        #                         jointregressor_matrix=jointregressor_matrix,
+        #                         mu_S=z_Style, mu_B=bonelength_reduced, 
+        #                         element_idx=-1)
+        # mu_S, mu_B = output
 
 
 
-        for i in range(10):
-            weight_interpolate(1.0, model_jacobian, model_temp)
-            shapeblendshape = shapeblendshape.to(device)
-            mesh_shape_pos = mesh_shape_pos.to(device)
-            jointregressor_matrix = jointregressor_matrix.to(device)
-            z_Style = z_Style.to(device)
-            bonelength_reduced = bonelength_reduced.to(device)
-            output = model_jacobian(beta=None, 
-                                    bonelength=None, 
-                                    shapeblendshape=shapeblendshape, 
-                                    mesh_shape_pos=mesh_shape_pos, 
-                                    jointregressor_matrix=jointregressor_matrix,
-                                    mu_S=z_Style, mu_B=bonelength_reduced, 
-                                    element_idx=i)
-            # mu_S, mu_B, mu_hat_S, mu_hat_B, eps_S, eps_B = concat_temp2(output)
-            mu_hat_S, mu_hat_B, eps_S, eps_B = output
+        # for i in range(10):
+        #     weight_interpolate(1.0, model_jacobian, model_temp)
+        #     shapeblendshape = shapeblendshape.to(device)
+        #     mesh_shape_pos = mesh_shape_pos.to(device)
+        #     jointregressor_matrix = jointregressor_matrix.to(device)
+        #     z_Style = z_Style.to(device)
+        #     bonelength_reduced = bonelength_reduced.to(device)
+        #     output = model_jacobian(beta=None, 
+        #                             bonelength=None, 
+        #                             shapeblendshape=shapeblendshape, 
+        #                             mesh_shape_pos=mesh_shape_pos, 
+        #                             jointregressor_matrix=jointregressor_matrix,
+        #                             mu_S=z_Style, mu_B=bonelength_reduced, 
+        #                             element_idx=i)
+        #     # mu_S, mu_B, mu_hat_S, mu_hat_B, eps_S, eps_B = concat_temp2(output)
+        #     mu_hat_S, mu_hat_B, eps_S, eps_B = output
 
-            loss_func_jacobian = md.loss_func_jacobian(mu_S, mu_B, mu_hat_S, mu_hat_B, eps_S, eps_B, BATCH_SIZE)
-            loss_jacobian = loss_func_jacobian
-            loss_jacobian.backward()
-            train_loss += loss_jacobian.item()
-            losses['Jac'] += loss_jacobian.item()
-            optimizer_jacobian.step()
-            optimizer_jacobian.zero_grad()
-            weight_add(1.0, model, model_jacobian)
-        
-        weight_add(-10.0, model, model_temp)
+        #     loss_func_jacobian = md.loss_func_jacobian(mu_S, mu_B, mu_hat_S, mu_hat_B, eps_S, eps_B, BATCH_SIZE)
+        #     loss_jacobian = loss_func_jacobian
+        #     loss_jacobian.backward()
+        #     train_loss += loss_jacobian.item()
+        #     losses['Jac'] += loss_jacobian.item()
+        #     optimizer_jacobian.step()
+        #     optimizer_jacobian.zero_grad()
+        #     weight_add(1.0, model, model_jacobian)
+            
+        # weight_add(-10.0, model, model_temp)
 
     
     train_loss =  train_loss
@@ -284,34 +284,33 @@ def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jac
 
 
 def test(model,model_jacobian,model_temp,test_iterator,IsNeedSave=False):
-    global generated_beta_list, generated_bonelength_list, task
+    global generated_beta_list, generated_bonelength_list, task, generated_beta_list
     task = 'test'
     # set the evaluation mode
     model.eval()
 
     # test loss for the data
     test_loss = 0
-    losses = {'KLD':0.0,'RCL_bone':0.0,'RCL_x':0.0,'Cov':0.0,'Jac':0.0}
+    losses = {'KLD':0.0,'RCL_bone':0.0,'RCL_x':0.0,'Cov':0.0,'Jac':0.0,'RCL_beta':0.0}
     training_bias = (TEST_SIZE - 1) / (BATCH_SIZE - 1)
 
     # we don't need to track the gradients, since we are not updating the parameters during evaluation / testing
     with torch.no_grad():
         weight_interpolate(1.0, model_jacobian, model)
-        for i, (beta, bonelength, shapeblendshape, mesh_shape_pos, jointregressor_matrix) in enumerate(test_iterator):
+        for i, (beta, shapeblendshape, mesh_shape_pos, jointregressor_matrix) in enumerate(test_iterator):
             beta = beta.to(device)
-            bonelength = bonelength.to(device)
             shapeblendshape = shapeblendshape.to(device)
             mesh_shape_pos = mesh_shape_pos.to(device)
             jointregressor_matrix = jointregressor_matrix.to(device)
 
             
             output = model(beta=beta, 
-                            # bonelength=bonelength, 
+                            bonelength=None, 
                             shapeblendshape=shapeblendshape, 
                             mesh_shape_pos=mesh_shape_pos, 
                             jointregressor_matrix=jointregressor_matrix)
 
-            generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh, z_Style = output
+            generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh, z_Style, bonelength = output
 
             if i == 0 and IsNeedSave:
                 generated_beta_list += [[beta, generated_beta]]
@@ -333,43 +332,44 @@ def test(model,model_jacobian,model_temp,test_iterator,IsNeedSave=False):
             losses['KLD'] += sublosses['KLD'].item()
             losses['RCL_bone'] += sublosses['RCL_bone'].item()
             losses['RCL_x'] += sublosses['RCL_x'].item()
+            losses['RCL_beta'] += sublosses['RCL_beta'].item()
             losses['Cov'] += L_covarpen.item()
 
 
-            shapeblendshape = shapeblendshape.to(device)
-            mesh_shape_pos = mesh_shape_pos.to(device)
-            jointregressor_matrix = jointregressor_matrix.to(device)
-            z_Style = z_Style.to(device)
-            bonelength_reduced = bonelength_reduced.to(device)
-            output = model_jacobian(beta=None, 
-                                    bonelength=None, 
-                                    shapeblendshape=shapeblendshape, 
-                                    mesh_shape_pos=mesh_shape_pos, 
-                                    jointregressor_matrix=jointregressor_matrix,
-                                    mu_S=z_Style, mu_B=bonelength_reduced, 
-                                    element_idx=-1)
-            mu_S, mu_B = output
+            # shapeblendshape = shapeblendshape.to(device)
+            # mesh_shape_pos = mesh_shape_pos.to(device)
+            # jointregressor_matrix = jointregressor_matrix.to(device)
+            # z_Style = z_Style.to(device)
+            # bonelength_reduced = bonelength_reduced.to(device)
+            # output = model_jacobian(beta=None, 
+            #                         bonelength=None, 
+            #                         shapeblendshape=shapeblendshape, 
+            #                         mesh_shape_pos=mesh_shape_pos, 
+            #                         jointregressor_matrix=jointregressor_matrix,
+            #                         mu_S=z_Style, mu_B=bonelength_reduced, 
+            #                         element_idx=-1)
+            # mu_S, mu_B = output
 
 
-            for i in range(10):
-                shapeblendshape = shapeblendshape.to(device)
-                mesh_shape_pos = mesh_shape_pos.to(device)
-                jointregressor_matrix = jointregressor_matrix.to(device)
-                z_Style = z_Style.to(device)
-                bonelength_reduced = bonelength_reduced.to(device)
-                output = model_jacobian(beta=None, 
-                                        bonelength=None, 
-                                        shapeblendshape=shapeblendshape, 
-                                        mesh_shape_pos=mesh_shape_pos, 
-                                        jointregressor_matrix=jointregressor_matrix,
-                                        mu_S=z_Style, mu_B=bonelength_reduced, 
-                                        element_idx=i)
+            # for i in range(10):
+            #     shapeblendshape = shapeblendshape.to(device)
+            #     mesh_shape_pos = mesh_shape_pos.to(device)
+            #     jointregressor_matrix = jointregressor_matrix.to(device)
+            #     z_Style = z_Style.to(device)
+            #     bonelength_reduced = bonelength_reduced.to(device)
+            #     output = model_jacobian(beta=None, 
+            #                             bonelength=None, 
+            #                             shapeblendshape=shapeblendshape, 
+            #                             mesh_shape_pos=mesh_shape_pos, 
+            #                             jointregressor_matrix=jointregressor_matrix,
+            #                             mu_S=z_Style, mu_B=bonelength_reduced, 
+            #                             element_idx=i)
 
-                mu_hat_S, mu_hat_B, eps_S, eps_B = output
-                loss_func_jacobian = md.loss_func_jacobian(mu_S, mu_B, mu_hat_S, mu_hat_B, eps_S, eps_B, BATCH_SIZE)
-                loss_jacobian = loss_func_jacobian
-                test_loss += loss_jacobian.item()
-                losses['Jac'] += loss_jacobian.item()
+            #     mu_hat_S, mu_hat_B, eps_S, eps_B = output
+            #     loss_func_jacobian = md.loss_func_jacobian(mu_S, mu_B, mu_hat_S, mu_hat_B, eps_S, eps_B, BATCH_SIZE)
+            #     loss_jacobian = loss_func_jacobian
+            #     test_loss += loss_jacobian.item()
+            #     losses['Jac'] += loss_jacobian.item()
             
     test_loss =  test_loss
     return test_loss, losses
@@ -407,10 +407,12 @@ def save_trained_model(model, model_jacobian, model_temp,train_dataset, test_dat
                     'train_KLD': train_losses['KLD']/len(train_dataset),
                     'train_RCL_bone': train_losses['RCL_bone']/len(train_dataset),
                     'train_RCL_x': train_losses['RCL_x']/len(train_dataset),
+                    'train_RCL_beta': train_losses['RCL_beta']/len(train_dataset),
                     'train_Cov': train_losses['Cov']/len(train_dataset),
                     'test_KLD': test_losses['KLD']/len(test_dataset),
                     'test_RCL_bone': test_losses['RCL_bone']/len(test_dataset),
                     'test_RCL_x': test_losses['RCL_x']/len(test_dataset),
+                    'test_RCL_beta': test_losses['RCL_beta']/len(test_dataset),
                     'test_Cov': test_losses['Cov']/len(test_dataset)
                     }
         wandb.log(metrics)
@@ -419,13 +421,13 @@ def save_trained_model(model, model_jacobian, model_temp,train_dataset, test_dat
 
         scheduler.step()
 
-        # if e > 1 and (e % 3 == 0):
-        # https://tutorials.pytorch.kr/beginner/saving_loading_models.html
-        torch.save({
-            'epoch': N_EPOCHS,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-        }, PATH + '_' +str(e) + '.pt')
+        if e > 1 and (e % 19 == 0):
+            # https://tutorials.pytorch.kr/beginner/saving_loading_models.html
+            torch.save({
+                'epoch': N_EPOCHS,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+            }, PATH + '_' +str(e) + '.pt')
 
 
 def wrapper():
@@ -444,7 +446,7 @@ def transformation():
     return transform
 
 def setup_trained_model():
-    global PATH, generated_beta_list, config, TRAINED_TIME
+    global PATH, config, TRAINED_TIME
 
     if TRAINED_TIME is None:
         TRAINED_TIME = stm
@@ -457,26 +459,26 @@ def setup_trained_model():
     transform = transformation()
 
     train_dataset = StarBetaBoneLengthDataset(
-        path='./data/train.npz',
+        path='./datasmpl/train.npz',
         transform=transform,
         debug=TRAIN_SIZE
     )
 
     test_dataset = StarBetaBoneLengthDataset(
-        path='./data/test.npz',
+        path='./datasmpl/test.npz',
         transform=transform,
         debug=TEST_SIZE
     )
 
     validation_dataset = StarBetaBoneLengthDataset(
-        path='./data/validation.npz',
+        path='./datasmpl/validation.npz',
         transform=transform,
         debug=TEST_SIZE
     )
 
     train_iterator = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
     test_iterator = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
-    validation_dataset = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+    validation_iterator = DataLoader(validation_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
 
     model = md.CVAE(BATCH_SIZE=BATCH_SIZE)
     model_jacobian = md.CVAE(BATCH_SIZE=BATCH_SIZE, IsSupporter=True)
@@ -507,20 +509,21 @@ def setup_trained_model():
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
     scheduler_jacobian = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
 
-    if not os.path.isfile(PATH):
+    if not os.path.isfile(PATH + '.pt'):
         #sort, dnn style, load data, input/loss, version
         wandb.init(project="STARVAE-7-with-Cov-Jac")
         wandb.watch(model)
         save_trained_model(model, model_jacobian, model_temp, train_dataset, test_dataset, train_iterator, test_iterator, optimizer, optimizer_jacobian, scheduler, scheduler_jacobian)
     else:
-        load_trained_model(model, model_jacobian, train_dataset, train_iterator)
+        load_trained_model(model, model_jacobian, validation_dataset, validation_iterator)
 
     return model, train_iterator, test_iterator, validation_dataset
 
 def main():
-    global generated_beta_list, generated_bonelength_list
+    global generated_beta_list, generated_bonelength_list, generated_loss_list
     generated_beta_list = []
     generated_bonelength_list = []
+    generated_loss_list = []
     wrapper()
 
     np.set_printoptions(precision=3, suppress=True)

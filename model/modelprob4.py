@@ -39,28 +39,21 @@ class NUMBER:
 
         return mlp_blocks, last_block
 
-
-NUM_STYLE = NUMBER(name='encoder', input=6890 * 3, hidden_encoder=[4096, 1024, 256], latent=10, hidden_decoder=None,
+LATENT_STYLE = 10
+LATENT_BONELENGTH = 10
+NUM_STYLE = NUMBER(name='encoder', input=6890 * 3, hidden_encoder=[4096, 1024, 256], latent=LATENT_STYLE, hidden_decoder=None,
                    output=None)
-NUM_BONELENGTH = NUMBER(name='encoder', input=23, hidden_encoder=[64, 128, 32], latent=10, hidden_decoder=None,
+NUM_BONELENGTH = NUMBER(name='encoder', input=23, hidden_encoder=[64, 128, 32], latent=LATENT_BONELENGTH, hidden_decoder=None,
                         output=None)
-NUM_DECODER = NUMBER(name='decoder', latent=10 + 10, hidden_encoder=[64, 128, 256], output=300, hidden_decoder=None,
+# NUM_DECODER = NUMBER(name='decoder', latent=LATENT_STYLE + LATENT_BONELENGTH, hidden_encoder=[64, 128, 256], output=300, hidden_decoder=None,
+#                      input=None)
+NUM_DECODER_SMPL = NUMBER(name='decoder', latent=LATENT_STYLE + LATENT_BONELENGTH, hidden_encoder=[64, 128, 64], output=10, hidden_decoder=None,
                      input=None)
 
-BETA_4 = 50.0
-CUDA = torch.cuda.is_available()
-
 GAMMA = 10.0
-JACOBIAN_LOSS_WEIGHT = 0.001
+JACOBIAN_LOSS_WEIGHT = 1.0
 LAMBDA_INTRA_GROUP_ON_DIAG = 0.00  # Note these two are present in the prior matcher
 LAMBDA_INTRA_GROUP_OFF_DIAG = 0.00
-BETA = (  ## Collection of KL divergence loss weights ##
-    1.000,  # Weight on (i), the sum of intra-group TC
-    1.000,  # Weight on (ii), the sum of dimension-wise KL divergences
-    1.000,  # Weight on (2), the mutual information between x & z
-    BETA_4,  # Weight on (A), the inter-group TC
-    0.000  # Weight on supervised error term
-)
 
 
 def mlp_block(input_dim, output_dim, IsBatchNorm=True, activation_func='LeakyReLU'):
@@ -102,10 +95,27 @@ def mlp_block(input_dim, output_dim, IsBatchNorm=True, activation_func='LeakyReL
         else:
             assert False
 
+class EncoderBonelength(nn.Module):
+    def __init__(self, NUM_LAYER):
+        super(self.__class__, self).__init__()
+        self.NUM_LAYER = NUM_LAYER
+        mlp_blocks, last_block = NUM_LAYER.get_blocks()
+        self.enc_hidden = nn.Sequential(*mlp_blocks)
+
+        self.z_mean = last_block
+
+    def forward(self, x):
+        hiddens = self.enc_hidden(x)
+        reduced_bonelength = self.z_mean(hiddens)
+        # z_mean.requires_grad_(True)
+        # z_mean.retain_grad()
+
+        return reduced_bonelength
+
 
 # TODO: z_mean이 jacobian때 정상적으로 미분되고 원래 함수에는 영향을 안끼치는 지 확인
-class Encoder(nn.Module):
-    def __init__(self, NUM_LAYER, IsUseOnlyMu=False):
+class EncoderStyle(nn.Module):
+    def __init__(self, NUM_LAYER):
         super(self.__class__, self).__init__()
         self.NUM_LAYER = NUM_LAYER
         mlp_blocks, last_block = NUM_LAYER.get_blocks()
@@ -113,20 +123,15 @@ class Encoder(nn.Module):
 
         self.z_mean = last_block
         self.z_std = last_block
-        self.IsUseOnlyMu = IsUseOnlyMu
 
-    def forward(self, x, IsUseOnlyMu=None):
-        if IsUseOnlyMu is None:
-            IsUseOnlyMu = self.IsUseOnlyMu
+    def forward(self, x):
         hiddens = self.enc_hidden(x)
         z_mean = self.z_mean(hiddens)
-        z_mean.requires_grad_(True)
-        z_mean.retain_grad()
+        # z_mean.requires_grad_(True)
+        # z_mean.retain_grad()
         z_std = self.z_std(hiddens)
-        if IsUseOnlyMu:
-            return z_mean
-        else:
-            return z_mean, z_std
+
+        return z_mean, z_std
 
 
 # TODO: change 10 to other value
@@ -138,8 +143,8 @@ class Decoder(nn.Module):
         blocks = mlp_blocks + [last_block]
         self.dec_image = nn.Sequential(*blocks)
 
-    def forward(self, value, z):
-        z_cat = torch.cat((z, value.to(z.get_device())), dim=1)
+    def forward(self, bonelength_value, style_z):
+        z_cat = torch.cat((style_z, bonelength_value.to(style_z.get_device())), dim=1)
         if z_cat.shape[0] == 1:
             z_cat = torch.cat((z_cat, z_cat), dim=0)
         beta_reconstructed = self.dec_image(z_cat)
@@ -150,34 +155,45 @@ class CVAE(nn.Module):
     def __init__(self, BATCH_SIZE, IsSupporter=False, IsA=True,
                  NUM_ENCODER_STLYE=NUM_STYLE,
                  NUM_ENCODER_BONELENGTH=NUM_BONELENGTH,
-                 NUM_DECODER_ALL=NUM_DECODER):
+                 NUM_DECODER_ALL=NUM_DECODER_SMPL):
         super().__init__()
         self.NUM_ENCODER_STLYE = NUM_ENCODER_STLYE
         self.NUM_ENCODER_BONELENGTH = NUM_ENCODER_BONELENGTH
         self.NUM_DECODER_ALL = NUM_DECODER_ALL
         self.BATCH_SIZE = BATCH_SIZE
-        self.encoderStyle = Encoder(self.NUM_ENCODER_STLYE, IsUseOnlyMu=False)
-        self.encoderBonelength = Encoder(self.NUM_ENCODER_BONELENGTH, IsUseOnlyMu=True)
+        self.encoderStyle = EncoderStyle(self.NUM_ENCODER_STLYE)
+        self.encoderBonelength = EncoderBonelength(self.NUM_ENCODER_BONELENGTH)
         self.decoder = Decoder(self.NUM_DECODER_ALL)
         self.IsSupporter = IsSupporter
         self.IsA = IsA
 
-    def encode(self, beta, bonelength, IsUseOnlyMu=None):
+    def encode(self, beta, bonelength):
         mesh = self.calculate_mesh(beta)
         mesh_flatten = torch.flatten(mesh, start_dim=1)
 
         ##encode
-        if IsUseOnlyMu:
-            mu_output = self.encoderStyle(mesh_flatten, IsUseOnlyMu=IsUseOnlyMu)  # output is q_style or mu_style
-            bonelength_reduced = self.encoderBonelength(bonelength)
-            return None, bonelength_reduced, mu_output, None
-        else:
-            # print(f'mesh_flatten:{mesh_flatten.shape}')
-            mu_output, std_output = self.encoderStyle(mesh_flatten,
-                                                      IsUseOnlyMu=IsUseOnlyMu)  # output is q_style or mu_style
-            # print(f'mu_output:{mu_output.shape}\nstd_output:{std_output.shape}')
-            bonelength_reduced = self.encoderBonelength(bonelength)
-            return std_output, bonelength_reduced, mu_output, mesh
+
+        # print(f'mesh_flatten:{mesh_flatten.shape}')
+        mu_output, std_output = self.encoderStyle(mesh_flatten)  # output is q_style or mu_style
+        # print(f'mu_output:{mu_output.shape}\nstd_output:{std_output.shape}')
+        bonelength_reduced = self.encoderBonelength(bonelength)
+        return std_output, bonelength_reduced, mu_output, mesh
+
+    def forward_main_smpl(self, beta):
+        ##encode
+        mesh = self.calculate_mesh(beta)
+        bonelength = self.calculate_bonelength_both_from_mesh(mesh)
+        std_Style, bonelength_reduced, mu_Style, mesh = self.encode(beta, bonelength)
+        z = self.reparameterization(mu_Style, std_Style)
+        # self.device = z.get_device()
+        ##decode
+        generated_beta = self.decoder(bonelength_value = bonelength_reduced, style_z=z)
+        generated_mesh = self.calculate_mesh(generated_beta)
+        generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
+        # Loss_Jacobian = self.jacobianer(mu_S=mu_Style,mu_B=bonelength_reduced)
+        # print(generated_beta.shape, generated_bonelength.shape, mu_Style.shape, std_Style.shape, bonelength_reduced.shape, mesh.shape, generated_mesh.shape)
+        return generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh, z, bonelength
+
 
     def forward_main(self, beta, bonelength):
         ##encode
@@ -185,15 +201,12 @@ class CVAE(nn.Module):
         z = self.reparameterization(mu_Style, std_Style)
         # self.device = z.get_device()
         ##decode
-        generated_beta = self.decoder(z, bonelength_reduced)
+        generated_beta = self.decoder(bonelength_value = bonelength_reduced, style_z=z)
         generated_mesh = self.calculate_mesh(generated_beta)
         generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
         # Loss_Jacobian = self.jacobianer(mu_S=mu_Style,mu_B=bonelength_reduced)
         # print(generated_beta.shape, generated_bonelength.shape, mu_Style.shape, std_Style.shape, bonelength_reduced.shape, mesh.shape, generated_mesh.shape)
-        return generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh
-
-    def forward_supporter(self, mu_S, mu_B):
-        return self.jacobianer(mu_S, mu_B)
+        return generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh, z
 
     def forward(self, 
                 beta,
@@ -206,10 +219,14 @@ class CVAE(nn.Module):
         self.mesh_shape_pos = mesh_shape_pos
         self.jointregressor_matrix = jointregressor_matrix
         if self.IsSupporter is False:
-            return self.forward_main(beta=beta, bonelength=bonelength)
+            return self.forward_main_smpl(beta=beta)
+            # return self.forward_main(beta=beta, bonelength=bonelength)
         else:
             self.element_idx = element_idx
-            return self.forward_supporter(mu_S=mu_S, mu_B=mu_B)
+            if element_idx > -0.5:
+                return self.jacobianer(mu_S=mu_S, mu_B=mu_B)
+            else:
+                return self.jacobian_supporter(mu_S=mu_S, mu_B=mu_B)
 
     # reparameterize
     # https://whereisend.tistory.com/54
@@ -238,7 +255,7 @@ class CVAE(nn.Module):
 
         x_noised = torch.tensor(temp2.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=value.get_device())
 
-        _eps = torch.abs(_eps[:,self.element_idx].unsqueeze(1))
+        _eps = _eps[:,self.element_idx].unsqueeze(1)
         eps = torch.tensor(_eps.repeat(1, value.shape[1]).cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=value.get_device())
         # eps = torch.tensor(_eps[:,self.element_idx].unsqueeze(1).cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=value.get_device())
         return x_noised, eps
@@ -264,7 +281,7 @@ class CVAE(nn.Module):
         _shape = list(self.shapeblendshape.shape)
         x = torch.zeros(_shape, device=beta.get_device(), dtype=torch.float32)
         for batch_idx in range(beta.shape[0]):
-            x[batch_idx] = beta[batch_idx, :] * self.shapeblendshape[batch_idx, :]
+            x[batch_idx] = beta[batch_idx, :] * 5.0 * self.shapeblendshape[batch_idx, :]
             # print(x.shape,self.reference['shapeblendshape'].shape)
         x = torch.sum(x, -1)
         x = x + self.mesh_shape_pos
@@ -306,42 +323,62 @@ class CVAE(nn.Module):
         _mu_B = torch.tensor(mu_B.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=mu_B.get_device())
         _mu_S = torch.tensor(mu_S.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=mu_S.get_device())
 
-        _z_S, _eps_S = self.add_noise(mu_S)
+        noised_z_S, noised_eps_S = self.add_noise(mu_S)
         # _z_S = torch.tensor(z_S.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
         # _eps_S = torch.tensor(eps_S.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
-        generated_beta = self.decoder(_mu_B, _z_S)
+        generated_beta = self.decoder(bonelength_value = _mu_B, style_z = noised_z_S)
         generated_mesh = self.calculate_mesh(generated_beta)
         generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
-        _, _, mu_hat_B, _ = self.encode(generated_beta, generated_bonelength, IsUseOnlyMu=True)  # This is mu_hat
+        _, mu_hat_B, _, _ = self.encode(generated_beta, generated_bonelength)  # This is mu_hat
 
-        _z_B, _eps_B = self.add_noise(mu_B)
+        noised_z_B, noised_eps_B = self.add_noise(mu_B)
         # _z_B = torch.tensor(z_B.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
         # _eps_B = torch.tensor(eps_B.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=self.device)
-        generated_beta = self.decoder(_z_B, _mu_S)
+        generated_beta = self.decoder(bonelength_value = noised_z_B, style_z = _mu_S)
         generated_mesh = self.calculate_mesh(generated_beta)
         generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
-        _, mu_hat_S, _, _ = self.encode(generated_beta, generated_bonelength, IsUseOnlyMu=True)  # This is mu_hat
+        _, _, mu_hat_S, _ = self.encode(generated_beta, generated_bonelength)  # This is mu_hat
 
-        return _mu_S, _mu_B, mu_hat_S, mu_hat_B, _eps_S, _eps_B
+        return mu_hat_S, mu_hat_B, noised_eps_S, noised_eps_B
 
+    def jacobian_supporter(self, mu_S, mu_B):
+        generated_beta = self.decoder(bonelength_value = mu_B, style_z = mu_S)
+        generated_mesh = self.calculate_mesh(generated_beta)
+        generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
+        _, mu_hat_B, _, _ = self.encode(generated_beta, generated_bonelength)  # This is mu_hat
+
+        generated_beta = self.decoder(bonelength_value = mu_B, style_z = mu_S)
+        generated_mesh = self.calculate_mesh(generated_beta)
+        generated_bonelength = self.calculate_bonelength_both_from_mesh(generated_mesh)
+        _, _, mu_hat_S, _ = self.encode(generated_beta, generated_bonelength)  # This is mu_hat
+
+        _mu_hat_B = torch.tensor(mu_hat_B.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=mu_B.get_device())
+        _mu_hat_S = torch.tensor(mu_hat_S.cpu().data.numpy(), dtype=torch.float32, requires_grad=True, device=mu_S.get_device())
+        return _mu_hat_S, _mu_hat_B
 
 def likelihood_loss(X_hat, X):
     euc_err = (X_hat - X).pow(2).mean(dim=-1)
     return euc_err.unsqueeze(0)
 
+def RMSE(y, pred_y):
+    eps = 1e-10
+    return  torch.sqrt(F.mse_loss(y,pred_y)+eps)
+
 
 def loss_wrapper(x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bonelength, beta, reconstructed_beta):
-    # loss = calculate_base_loss(x, reconstructed_x, z_mu, z_var)
-    b_beta = 5.0
-    regular = 100.0
+    
+    b_beta = 1.0
+    regular = 1.0
+    RCL_beta_weight = 0.25
     mean, log_var = z_mu, z_var
     KLD = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
-    RCL_x = F.mse_loss(x, reconstructed_x) * b_beta * regular
-    RCL_bone = F.mse_loss(reconstructed_bonelength, bonelength) * regular
-    # RCL_beta = F.mse_loss(reconstructed_beta, beta)
+    RCL_x = RMSE(x, reconstructed_x) * b_beta * regular
+    RCL_bone = RMSE(reconstructed_bonelength, bonelength) * regular
+    # RCL_beta = RMSE(reconstructed_beta, beta) * RCL_beta_weight
+    RCL_beta = 0.0
 
-    loss = KLD + RCL_bone + RCL_x
-    return loss, {'KLD': KLD, 'RCL_bone': RCL_bone, 'RCL_x': RCL_x}
+    loss = KLD + RCL_bone + RCL_x + RCL_beta
+    return loss, {'KLD': KLD, 'RCL_bone': RCL_bone, 'RCL_x': RCL_x, 'RCL_beta': RCL_beta}
 
 
 def loss_func_basic(
@@ -409,7 +446,9 @@ def loss_func_jacobian(_mu_S, _mu_B, mu_hat_S, mu_hat_B, _eps_S, _eps_B, BATCH_S
         (torch.div((mu_hat_B - _mu_B),_eps_B)).pow(2) + 
         (torch.div((mu_hat_S - _mu_S),_eps_S)).pow(2)
         )
-    loss /= (torch.numel(_mu_B) + torch.numel(_mu_S) * BATCH_SIZE)
+    #0.5 for B and S
+    
+    loss /= (torch.numel(_mu_B) * torch.numel(_mu_S) * BATCH_SIZE) * 0.5
 
     return loss * JACOBIAN_LOSS_WEIGHT
 
