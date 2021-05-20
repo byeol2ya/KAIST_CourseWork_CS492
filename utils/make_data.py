@@ -396,12 +396,12 @@ if __name__ == "__main__":
     # merge(save_path_root='../data/')
     # save_reference(save_path_root='../data/',num_beta=300)
 
-    # make(save_path_root='/Data/MGY/STAR_Private/datasmpl/',num_beta=10,
+    # make(save_path_root='/Data/MGY/STAR-Private/datasmpl/',num_beta=10,
     # template=smplData.template, 
     # shapeblendshape=smplData.shapeblendshape,
     # jointregressor_matrix=smplData.jointregressor_matrix)
-    # merge(save_path_root='/Data/MGY/STAR_Private/datasmpl/')
-    save_reference(save_path_root='/Data/MGY/STAR_Private/datasmpl/',num_beta=10,
+    # merge(save_path_root='/Data/MGY/STAR-Private/datasmpl/')
+    save_reference(save_path_root='/Data/MGY/STAR-Private/datasmpl/',num_beta=10,
     template=smplData.template, 
     shapeblendshape=smplData.shapeblendshape,
     jointregressor_matrix=smplData.jointregressor_matrix)

@@ -468,9 +468,9 @@ def setup_trained_model():
 
     if TRAINED_TIME is None:
         TRAINED_TIME = stm
-        PATH = '/Data/MGY/STAR_Private/resources/cvae_' + TRAINED_TIME + '.pt'
+        PATH = '/Data/MGY/STAR-Private/resources/cvae_' + TRAINED_TIME + '.pt'
     else:
-        PATH = '/Data/MGY/STAR_Private/resources/cvae_' + TRAINED_TIME+ '.pt'
+        PATH = '/Data/MGY/STAR-Private/resources/cvae_' + TRAINED_TIME+ '.pt'
 
     #wandb.config.update()
     transform = transformation()
@@ -572,8 +572,8 @@ def main():
     print(f'new:\n{new_val}')
     print(f'divide:\n{(abs(original_val) - abs(new_val))}')
     print(f'percent:\n{(abs(original_val) - abs(new_val))/abs(original_val) * 100.0}')
-    extract_obj(save_path="/Data/MGY/STAR_Private/outputs/",name=TRAINED_TIME+"_original",betas=original_val)
-    extract_obj(save_path="/Data/MGY/STAR_Private/outputs/",name=TRAINED_TIME+"_new",betas=new_val)
+    extract_obj(save_path="/Data/MGY/STAR-Private/outputs/",name=TRAINED_TIME+"_original",betas=original_val)
+    extract_obj(save_path="/Data/MGY/STAR-Private/outputs/",name=TRAINED_TIME+"_new",betas=new_val)
 
     # for beta_pair in generated_beta_list:
     #         original_val = beta_pair[0].detach().cpu().numpy()[0,:]
@@ -583,8 +583,8 @@ def main():
     #         print(f'new:\n{new_val}')
     #         print(f'divide:\n{(abs(original_val) - abs(new_val))}')
     #         print(f'percent:\n{(abs(original_val) - abs(new_val))/abs(original_val) * 100.0}')
-    #         extract_obj(save_path="/Data/MGY/STAR_Private/",name="stm"+"_original",betas=original_val)
-    #         extract_obj(save_path="C:/Users/TheOtherMotion/Documents/GitHub/STAR_Private/",name="stm"+"_new",betas=new_val)
+    #         extract_obj(save_path="/Data/MGY/STAR-Private/",name="stm"+"_original",betas=original_val)
+    #         extract_obj(save_path="C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/",name="stm"+"_new",betas=new_val)
 
 
 if __name__ == "__main__":

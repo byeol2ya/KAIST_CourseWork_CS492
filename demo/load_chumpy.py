@@ -22,7 +22,7 @@
 import sys
 sys.path.append('../')
 sys.path.append('../../')
-from STAR_Private.star.ch.star import STAR
+from STAR-Private.star.ch.star import STAR
 import chumpy as ch
 import numpy as np
 
