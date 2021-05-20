@@ -367,7 +367,7 @@ def RMSE(y, pred_y):
 
 def loss_wrapper(x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bonelength, beta, reconstructed_beta):
     
-    b_beta = 1.0
+    b_beta = 5.0
     regular = 1.0
     RCL_beta_weight = 0.25
     mean, log_var = z_mu, z_var
@@ -376,6 +376,7 @@ def loss_wrapper(x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bone
     RCL_bone = RMSE(reconstructed_bonelength, bonelength) * regular
     # RCL_beta = RMSE(reconstructed_beta, beta) * RCL_beta_weight
     RCL_beta = 0.0
+    RCL_bone = 0.0
 
     loss = KLD + RCL_bone + RCL_x + RCL_beta
     return loss, {'KLD': KLD, 'RCL_bone': RCL_bone, 'RCL_x': RCL_x, 'RCL_beta': RCL_beta}
@@ -432,6 +433,7 @@ def loss_func_basic(
     interPen = interTerm(C_hat_SB)
     # Final weighted penalty
     L_covarpen = GAMMA * interPen + LAMBDA_INTRA_GROUP_OFF_DIAG * offDiagPen + LAMBDA_INTRA_GROUP_ON_DIAG * onDiagPen
+    L_covarpen = 0.0
 
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
     # --- Finally compute the total loss sum ---#

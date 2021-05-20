@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 ''' This code contains the implementation of conditional VAE
 https://github.com/graviraja/pytorch-sample-codes/blob/master/conditional_vae.py
 '''
@@ -6,8 +8,8 @@ https://github.com/graviraja/pytorch-sample-codes/blob/master/conditional_vae.py
 # GPU_NUM = 0,1 # 원하는 GPU 번호 입력
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "4"
-GPU_VISIBLE_NUM = 1
+os.environ["CUDA_VISIBLE_DEVICES"] = "3,4"
+GPU_VISIBLE_NUM = os.environ["CUDA_VISIBLE_DEVICES"].count(',') + 1
 
 import sys
 import time
@@ -117,55 +119,6 @@ def weight_self_divide(percent, target_network):
         # print(f'before: {factor} {(param.data - target_param.data).sum()}')
         target_param.data.copy_(target_param.data * percent)
 
-def concat_temp1(val):
-    if GPU_VISIBLE_NUM == 3:
-        generated_beta =        torch.cat((val[0][0], val[1][0].to(val[0][0].get_device()), val[2][0].to(val[0][0].get_device())), 0)
-        generated_bonelength =  torch.cat((val[0][1], val[1][1].to(val[0][0].get_device()), val[2][1].to(val[0][0].get_device())), 0)
-        mu_Style =              torch.cat((val[0][2], val[1][2].to(val[0][0].get_device()), val[2][2].to(val[0][0].get_device())), 0)
-        std_Style =             torch.cat((val[0][3], val[1][3].to(val[0][0].get_device()), val[2][3].to(val[0][0].get_device())), 0)
-        bonelength_reduced =    torch.cat((val[0][4], val[1][4].to(val[0][0].get_device()), val[2][4].to(val[0][0].get_device())), 0)
-        mesh =                  torch.cat((val[0][5], val[1][5].to(val[0][0].get_device()), val[2][5].to(val[0][0].get_device())), 0)
-        generated_mesh =        torch.cat((val[0][6], val[1][6].to(val[0][0].get_device()), val[2][6].to(val[0][0].get_device())), 0)
-    elif GPU_VISIBLE_NUM == 2:
-        generated_beta =        torch.cat((val[0][0].to(val[0][0].get_device()), val[1][0].to(val[0][0].get_device())), 0)
-        generated_bonelength =  torch.cat((val[0][1].to(val[0][0].get_device()), val[1][1].to(val[0][0].get_device())), 0)
-        mu_Style =              torch.cat((val[0][2].to(val[0][0].get_device()), val[1][2].to(val[0][0].get_device())), 0)
-        std_Style =             torch.cat((val[0][3].to(val[0][0].get_device()), val[1][3].to(val[0][0].get_device())), 0)
-        bonelength_reduced =    torch.cat((val[0][4].to(val[0][0].get_device()), val[1][4].to(val[0][0].get_device())), 0)
-        mesh =                  torch.cat((val[0][5].to(val[0][0].get_device()), val[1][5].to(val[0][0].get_device())), 0)
-        generated_mesh =        torch.cat((val[0][6].to(val[0][0].get_device()), val[1][6].to(val[0][0].get_device())), 0)
-
-    elif GPU_VISIBLE_NUM == 1:
-        generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh = val
-    else:
-        assert(False, "CHECK torch cat")
-
-    return generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh
-
-def concat_temp2(val):
-    if GPU_VISIBLE_NUM == 3:
-        mu_S =                   torch.cat((val[0][0], val[1][0].to(val[0][0].get_device()), val[2][0].to(val[0][0].get_device())), 0)
-        mu_B =                   torch.cat((val[0][1], val[1][1].to(val[0][0].get_device()), val[2][1].to(val[0][0].get_device())), 0)
-        mu_hat_S =               torch.cat((val[0][2], val[1][2].to(val[0][0].get_device()), val[2][2].to(val[0][0].get_device())), 0)
-        mu_hat_B =               torch.cat((val[0][3], val[1][3].to(val[0][0].get_device()), val[2][3].to(val[0][0].get_device())), 0)
-        eps_S =                  torch.cat((val[0][4], val[1][4].to(val[0][0].get_device()), val[2][4].to(val[0][0].get_device())), 0)
-        eps_B =                  torch.cat((val[0][5], val[1][5].to(val[0][0].get_device()), val[2][5].to(val[0][0].get_device())), 0)
-    elif GPU_VISIBLE_NUM == 2:
-        mu_S =                   torch.cat((val[0][0], val[1][0].to(val[0][0].get_device())), 0)
-        mu_B =                   torch.cat((val[0][1], val[1][1].to(val[0][0].get_device())), 0)
-        mu_hat_S =               torch.cat((val[0][2], val[1][2].to(val[0][0].get_device())), 0)
-        mu_hat_B =               torch.cat((val[0][3], val[1][3].to(val[0][0].get_device())), 0)
-        eps_S =                  torch.cat((val[0][4], val[1][4].to(val[0][0].get_device())), 0)
-        eps_B =                  torch.cat((val[0][5], val[1][5].to(val[0][0].get_device())), 0)
-
-    elif GPU_VISIBLE_NUM == 1:
-        mu_S, mu_B, mu_hat_S, mu_hat_B, eps_S, eps_B = val
-    else:
-        assert(False, "CHECK torch cat")
-
-    return mu_S, mu_B, mu_hat_S, mu_hat_B, eps_S, eps_B
-
-
 def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jacobian):
     global generated_beta_list, generated_bonelength_list, task, generated_beta_list
     task = 'train'
@@ -222,10 +175,10 @@ def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jac
         train_loss += loss_a.item()
 
         losses['KLD'] += sublosses['KLD'].item()
-        losses['RCL_bone'] += sublosses['RCL_bone'].item()
+        # losses['RCL_bone'] += sublosses['RCL_bone'].item()
         losses['RCL_x'] += sublosses['RCL_x'].item()
-        losses['RCL_beta'] += sublosses['RCL_beta'].item()
-        losses['Cov'] += L_covarpen.item()
+        # losses['RCL_beta'] += sublosses['RCL_beta'].item()
+        # losses['Cov'] += L_covarpen.item()
 
         # update the weights
         optimizer.step()
@@ -330,10 +283,10 @@ def test(model,model_jacobian,model_temp,test_iterator,IsNeedSave=False):
             test_loss += loss_a.item()
 
             losses['KLD'] += sublosses['KLD'].item()
-            losses['RCL_bone'] += sublosses['RCL_bone'].item()
+            # losses['RCL_bone'] += sublosses['RCL_bone'].item()
             losses['RCL_x'] += sublosses['RCL_x'].item()
-            losses['RCL_beta'] += sublosses['RCL_beta'].item()
-            losses['Cov'] += L_covarpen.item()
+            # losses['RCL_beta'] += sublosses['RCL_beta'].item()
+            # losses['Cov'] += L_covarpen.item()
 
 
             # shapeblendshape = shapeblendshape.to(device)
@@ -421,7 +374,7 @@ def save_trained_model(model, model_jacobian, model_temp,train_dataset, test_dat
 
         scheduler.step()
 
-        if e > 1 and (e % 19 == 0):
+        if e > 1 and (e % 5 == 4):
             # https://tutorials.pytorch.kr/beginner/saving_loading_models.html
             torch.save({
                 'epoch': N_EPOCHS,
@@ -484,7 +437,7 @@ def setup_trained_model():
     model_jacobian = md.CVAE(BATCH_SIZE=BATCH_SIZE, IsSupporter=True)
     model_temp = md.CVAE(BATCH_SIZE=BATCH_SIZE, IsSupporter=True)
 
-    assert(GPU_VISIBLE_NUM > 1, "You need at least 2 GPUs")
+    # assert(GPU_VISIBLE_NUM > 1, "You need at least 2 GPUs")
     print("Let's use", GPU_VISIBLE_NUM, "GPUs!")
     # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
     model = DataParallel(model)

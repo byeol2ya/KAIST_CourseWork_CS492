@@ -30,6 +30,11 @@ import pickle
 
 from scipy.stats import truncnorm
 
+import smpl_to_cstar as stc
+
+USE_STAR = False
+
+
 def euclidean_distance(cache, first_idx, second_idx, cache_offset=3):
     first = np.array(cache[cache_offset * first_idx:cache_offset * (first_idx + 1)])
     second = np.array(cache[cache_offset * second_idx:cache_offset * (second_idx + 1)])
@@ -89,7 +94,8 @@ class StarData:
         self.bonelength = None
 
 class DataGenerator:
-    def __init__(self, gender, data_path=None, beta=None, num_data=10000, num_beta=300, STATUS=0):
+    def __init__(self, gender, data_path=None, beta=None, num_data=10000, num_beta=300, STATUS=0, 
+                        template=None, shapeblendshape=None,jointregressor_matrix=None):
         """
 
         Note:
@@ -100,7 +106,8 @@ class DataGenerator:
 
         """
         self.gender = gender
-        self.model_dict = self.load_model(gender=self.gender)
+        if USE_STAR:
+            self.model_dict = self.load_model(gender=self.gender)
         self.num_data = num_data
         self.max_bonelength = 0
         self.data_idx = 0
@@ -123,9 +130,16 @@ class DataGenerator:
 
 
         #Usage: ~/star/ch/verts.py and ~/star/ch/star.py
-        self.template = np.array(ch.array(self.model_dict['v_template'])).astype('float')
-        self.shapeblendshape = np.array(ch.array(self.model_dict['shapedirs'][:,:,:num_beta])).astype('float')
-        self.jointregressor_matrix = np.array(ch.array(self.model_dict['J_regressor'])).astype('float')
+        self.template = template
+        self.shapeblendshape = shapeblendshape
+        self.jointregressor_matrix = jointregressor_matrix
+
+        if self.template is None:
+            self.template = np.array(ch.array(self.model_dict['v_template'])).astype('float')
+        if self.shapeblendshape is None:
+            self.shapeblendshape = np.array(ch.array(self.model_dict['shapedirs'][:,:,:num_beta])).astype('float')
+        if self.jointregressor_matrix is None:
+            self.jointregressor_matrix = np.array(ch.array(self.model_dict['J_regressor'])).astype('float')
 
     def load_model(self,gender):
         if gender == 'male':
@@ -206,12 +220,18 @@ class DataGenerator:
         #local_model.v_shape and local_model.v_posed are different.
         #v_posed = v_shape + 0 degree pose blendshape
         #Thus, local_data.mesh_shape == local_model.v_shape
-        local_model = STAR(gender=self.gender, num_betas=local_data.num_beta, pose='', betas=ch.array(local_data.beta))
-        local_joint = np.array(local_model.J_transformed)
-        local_data.joint = local_joint
-        local_data.mesh_shape_pos = np.array(local_model)
+        if USE_STAR:
+            local_model = STAR(gender=self.gender, num_betas=local_data.num_beta, pose='', betas=ch.array(local_data.beta))
+            local_joint = np.array(local_model.J_transformed)
+            local_data.joint = local_joint
+            local_data.mesh_shape_pos = np.array(local_model)
+            local_data.bonelength = self.cal_bonelength_both(np.ravel(local_data.joint))
 
-        local_data.bonelength = self.cal_bonelength_both(np.ravel(local_data.joint))
+        else:
+            local_data.joint = np.zeros(1)
+            local_data.mesh_shape_pos = self.template
+            local_data.bonelength = np.zeros(1)
+
 
     def generate(self, std_range_list=[(-5,5)]):
         for self.data_idx in range(self.num_data):
@@ -293,7 +313,7 @@ class DataMerger:
             idx_list (:list:`int`): idx_list[0] is the first index of data and idx_list[-1] is the end index.
 
         """
-        self.root = root
+        self.root = root + '/'
         self.data_range = [idx_list[0], idx_list[-1]]
         self.data_size = idx_list[-1] - idx_list[0]
         # self.mesh_shape = sample['mesh_shape']
@@ -317,34 +337,43 @@ class DataMerger:
 
         save_data_npy(save_path=os.path.join(self.root,name+'.npz'),local_data=self.data,IsNeedDefault=False)
 
-def make():
+def make(save_path_root, num_beta,template=None, shapeblendshape=None,jointregressor_matrix=None):
     for i in range(131072):
-        save_path = '../data/final_data_'+str(i)+'.npz'
+        if save_path_root is None:
+            save_path_root = '../data/'
+        
+        save_path =os.path.join(save_path_root, 'final_data_'+str(i)+'.npz')
         #print(save_path)
         np.random.seed(i)
-        theStarData = DataGenerator(gender='female', num_data=1)
+        theStarData = DataGenerator(gender='female', num_data=1, num_beta=num_beta,
+                                    template=template, shapeblendshape=shapeblendshape,jointregressor_matrix=jointregressor_matrix)
         theStarData.save_data_npy(save_path)
         #print('finish')
 
 
-def merge():
-    sample_path = '../data/final_data_0.npz'
+def merge(save_path_root):
+    if save_path_root is None:
+        save_path_root = '../data/'
+    sample_path = os.path.join(save_path_root, 'final_data_0.npz')
     sample = load_data_npy(sample_path, IsNeedDefault=False)
-    mergedDataTrain = DataMerger(root='../data',sample=sample,idx_list=[0,32768])
+    mergedDataTrain = DataMerger(root=save_path_root,sample=sample,idx_list=[0,32768])
     mergedDataTrain.merge()
 
-    mergedDataTest = DataMerger(root='../data',sample=sample,idx_list=[32768,32768+8192])
+    mergedDataTest = DataMerger(root=save_path_root,sample=sample,idx_list=[32768,32768+8192])
     mergedDataTest.merge(name='test')
 
-    mergedDataValidation = DataMerger(root='../data',sample=sample,idx_list=[32768+8192,32768+8192+8192])
+    mergedDataValidation = DataMerger(root=save_path_root,sample=sample,idx_list=[32768+8192,32768+8192+8192])
     mergedDataValidation.merge(name='validation')
 
 
-def save_reference():
-    local_data_path = '../data/final_data_0.npz'
-    localData = DataGenerator(gender='female',data_path=local_data_path,beta=None,num_data=1,num_beta=300,STATUS=2)
+def save_reference(save_path_root, num_beta,template=None, shapeblendshape=None,jointregressor_matrix=None):
+    if save_path_root is None:
+        save_path_root = '../data/'
+    local_data_path = os.path.join(save_path_root, 'final_data_0.npz')
+    localData = DataGenerator(gender='female',data_path=local_data_path,beta=None,num_data=1,num_beta=num_beta,STATUS=2,
+                            template=template, shapeblendshape=shapeblendshape,jointregressor_matrix=jointregressor_matrix)
 
-    save_path = '../data/reference.npz'
+    save_path = os.path.join(save_path_root, 'reference.npz')
 
     #DEBUG
     # _max = -1
@@ -362,8 +391,19 @@ def save_reference():
                         jointregressor_matrix=localData.jointregressor_matrix)
 
 if __name__ == "__main__":
-    # make()
-    # merge()
-    save_reference()
+    smplData = stc.Data()
+    # make(save_path_root='../data/',num_beta=300)
+    # merge(save_path_root='../data/')
+    # save_reference(save_path_root='../data/',num_beta=300)
+
+    # make(save_path_root='/Data/MGY/STAR_Private/datasmpl/',num_beta=10,
+    # template=smplData.template, 
+    # shapeblendshape=smplData.shapeblendshape,
+    # jointregressor_matrix=smplData.jointregressor_matrix)
+    # merge(save_path_root='/Data/MGY/STAR_Private/datasmpl/')
+    save_reference(save_path_root='/Data/MGY/STAR_Private/datasmpl/',num_beta=10,
+    template=smplData.template, 
+    shapeblendshape=smplData.shapeblendshape,
+    jointregressor_matrix=smplData.jointregressor_matrix)
 
 #-4를 넣었을떄 x,y,z가 어디까지 확장되는지 4를 넣었을떄 x,y,z가 어디까지 확장되는지
