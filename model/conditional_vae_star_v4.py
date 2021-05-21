@@ -3,11 +3,10 @@ https://github.com/graviraja/pytorch-sample-codes/blob/master/conditional_vae.py
 '''
 
 #https://github.com/pytorch/pytorch/issues/9158
-# GPU_NUM = 0,1 # 원하는 GPU 번호 입력
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "3,4"
-GPU_VISIBLE_NUM = 2
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+GPU_VISIBLE_NUM = os.environ["CUDA_VISIBLE_DEVICES"].count(',') + 1
 
 import sys
 import time
@@ -30,7 +29,6 @@ import modelprob4 as md
 
 #https://greeksharifa.github.io/references/2020/06/10/wandb-usage/
 import wandb
-# from utils.parallel import DataParallelModel, DataParallelCriterion
 from torch.nn.parallel.data_parallel import DataParallel
 
 
@@ -39,14 +37,9 @@ from demo.load_chumpy import extract_obj
 tm = time.localtime()
 stm = time.strftime('%Y_%m_%d_%H_%M_%S', tm)
 
-
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-# device = torch.device(f'cuda' if torch.cuda.is_available() else 'cpu')
-# device = torch.device(f'cuda:{GPU_NUM}' if torch.cuda.is_available() else 'cpu')
-# print(f'device: {device}')
-# BATCH_SIZE = 64         # number of data points in each batch
+ROOT = (os.path.dirname(os.path.realpath(__file__)))
 TRAIN_SIZE = 64
 TEST_SIZE = 64
 # TRAIN_SIZE = 2048
@@ -59,7 +52,7 @@ HIDDEN_DIM = 256        # hidden dimension
 LATENT_DIM = 50         # latent vector dimension
 N_CLASSES = 14          # number of classes in the data
 DATA_SIZE = -1
-lr = 1e-4               # learning rate
+lr = 1e-2               # learning rate
 TRAINED_TIME = None
 # TRAINED_TIME = '2021_05_06_16_35_01'
 
@@ -95,75 +88,29 @@ hyperparameter_defaults = dict(
     dim_bonelength = DIM_BONELENGTH,
     )
 
+def _save(func, args, path):
+    os.makedirs(path, exist_ok=True)
+    func(*args)
+
+def _getfloat(value, attr='item'):
+    if hasattr(value, attr):
+        return value.item()
+    else:
+        return value
+
 def weight_interpolate(factor, target_network, network):
     for target_param, param in zip(target_network.parameters(), network.parameters()):
-        # print(f'target/origin: {factor} {target_param.data.sum()} {param.data.sum()}')
-        # print(f'before: {factor} {(param.data - target_param.data).sum()}')
         target_param.data.copy_(param.data * factor + target_param.data*(1.0 - factor))
-        # print(f'target/origin: {factor} {target_param.data.sum()} {param.data.sum()}')
-        # print(f'after : {factor} {(param.data - target_param.data).sum()}')
+
 
 def weight_add(percent, target_network, network):
     for target_param, param in zip(target_network.parameters(), network.parameters()):
-        # print(f'target/origin: {factor} {target_param.data.sum()} {param.data.sum()}')
-        # print(f'before: {factor} {(param.data - target_param.data).sum()}')
         target_param.data.copy_(param.data * percent + target_param.data)
-        # print(f'target/origin: {factor} {target_param.data.sum()} {param.data.sum()}')
-        # print(f'after : {factor} {(param.data - target_param.data).sum()}')
+
 
 def weight_self_divide(percent, target_network):
     for target_param in target_network.parameters():
-        # print(f'target/origin: {factor} {target_param.data.sum()} {param.data.sum()}')
-        # print(f'before: {factor} {(param.data - target_param.data).sum()}')
         target_param.data.copy_(target_param.data * percent)
-
-def concat_temp1(val):
-    if GPU_VISIBLE_NUM == 3:
-        generated_beta =        torch.cat((val[0][0], val[1][0].to(val[0][0].get_device()), val[2][0].to(val[0][0].get_device())), 0)
-        generated_bonelength =  torch.cat((val[0][1], val[1][1].to(val[0][0].get_device()), val[2][1].to(val[0][0].get_device())), 0)
-        mu_Style =              torch.cat((val[0][2], val[1][2].to(val[0][0].get_device()), val[2][2].to(val[0][0].get_device())), 0)
-        std_Style =             torch.cat((val[0][3], val[1][3].to(val[0][0].get_device()), val[2][3].to(val[0][0].get_device())), 0)
-        bonelength_reduced =    torch.cat((val[0][4], val[1][4].to(val[0][0].get_device()), val[2][4].to(val[0][0].get_device())), 0)
-        mesh =                  torch.cat((val[0][5], val[1][5].to(val[0][0].get_device()), val[2][5].to(val[0][0].get_device())), 0)
-        generated_mesh =        torch.cat((val[0][6], val[1][6].to(val[0][0].get_device()), val[2][6].to(val[0][0].get_device())), 0)
-    elif GPU_VISIBLE_NUM == 2:
-        generated_beta =        torch.cat((val[0][0].to(val[0][0].get_device()), val[1][0].to(val[0][0].get_device())), 0)
-        generated_bonelength =  torch.cat((val[0][1].to(val[0][0].get_device()), val[1][1].to(val[0][0].get_device())), 0)
-        mu_Style =              torch.cat((val[0][2].to(val[0][0].get_device()), val[1][2].to(val[0][0].get_device())), 0)
-        std_Style =             torch.cat((val[0][3].to(val[0][0].get_device()), val[1][3].to(val[0][0].get_device())), 0)
-        bonelength_reduced =    torch.cat((val[0][4].to(val[0][0].get_device()), val[1][4].to(val[0][0].get_device())), 0)
-        mesh =                  torch.cat((val[0][5].to(val[0][0].get_device()), val[1][5].to(val[0][0].get_device())), 0)
-        generated_mesh =        torch.cat((val[0][6].to(val[0][0].get_device()), val[1][6].to(val[0][0].get_device())), 0)
-
-    elif GPU_VISIBLE_NUM == 1:
-        generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh = val
-    else:
-        assert(False, "CHECK torch cat")
-
-    return generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh
-
-def concat_temp2(val):
-    if GPU_VISIBLE_NUM == 3:
-        mu_S =                   torch.cat((val[0][0], val[1][0].to(val[0][0].get_device()), val[2][0].to(val[0][0].get_device())), 0)
-        mu_B =                   torch.cat((val[0][1], val[1][1].to(val[0][0].get_device()), val[2][1].to(val[0][0].get_device())), 0)
-        mu_hat_S =               torch.cat((val[0][2], val[1][2].to(val[0][0].get_device()), val[2][2].to(val[0][0].get_device())), 0)
-        mu_hat_B =               torch.cat((val[0][3], val[1][3].to(val[0][0].get_device()), val[2][3].to(val[0][0].get_device())), 0)
-        eps_S =                  torch.cat((val[0][4], val[1][4].to(val[0][0].get_device()), val[2][4].to(val[0][0].get_device())), 0)
-        eps_B =                  torch.cat((val[0][5], val[1][5].to(val[0][0].get_device()), val[2][5].to(val[0][0].get_device())), 0)
-    elif GPU_VISIBLE_NUM == 2:
-        mu_S =                   torch.cat((val[0][0], val[1][0].to(val[0][0].get_device())), 0)
-        mu_B =                   torch.cat((val[0][1], val[1][1].to(val[0][0].get_device())), 0)
-        mu_hat_S =               torch.cat((val[0][2], val[1][2].to(val[0][0].get_device())), 0)
-        mu_hat_B =               torch.cat((val[0][3], val[1][3].to(val[0][0].get_device())), 0)
-        eps_S =                  torch.cat((val[0][4], val[1][4].to(val[0][0].get_device())), 0)
-        eps_B =                  torch.cat((val[0][5], val[1][5].to(val[0][0].get_device())), 0)
-
-    elif GPU_VISIBLE_NUM == 1:
-        mu_S, mu_B, mu_hat_S, mu_hat_B, eps_S, eps_B = val
-    else:
-        assert(False, "CHECK torch cat")
-
-    return mu_S, mu_B, mu_hat_S, mu_hat_B, eps_S, eps_B
 
 
 def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jacobian):
@@ -195,13 +142,12 @@ def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jac
         # forward pass
         # loss
         output = model(beta=beta, 
-                        # bonelength=bonelength, 
+                        bonelength=bonelength, 
                         shapeblendshape=shapeblendshape, 
                         mesh_shape_pos=mesh_shape_pos, 
                         jointregressor_matrix=jointregressor_matrix)
         
-        # generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh = concat_temp1(output)
-        generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh, z_Style = output
+        generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh, z_Style, bonelength = output
 
         if e == N_EPOCHS-1 and i == 0:
             generated_beta_list += [[beta, generated_beta]]
@@ -220,12 +166,12 @@ def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jac
         
         # backward pass
         loss_a.backward()
-        train_loss += loss_a.item()
+        train_loss += _getfloat(loss_a)
 
-        losses['KLD'] += sublosses['KLD'].item()
-        losses['RCL_bone'] += sublosses['RCL_bone'].item()
-        losses['RCL_x'] += sublosses['RCL_x'].item()
-        losses['Cov'] += L_covarpen.item()
+        losses['KLD'] += _getfloat(sublosses['KLD'])
+        losses['RCL_bone'] += _getfloat(sublosses['RCL_bone'])
+        losses['RCL_x'] += _getfloat(sublosses['RCL_x'])
+        losses['Cov'] += _getfloat(L_covarpen)
 
         # update the weights
         optimizer.step()
@@ -264,14 +210,13 @@ def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jac
                                     jointregressor_matrix=jointregressor_matrix,
                                     mu_S=z_Style, mu_B=bonelength_reduced, 
                                     element_idx=i)
-            # mu_S, mu_B, mu_hat_S, mu_hat_B, eps_S, eps_B = concat_temp2(output)
             mu_hat_S, mu_hat_B, eps_S, eps_B = output
 
             loss_func_jacobian = md.loss_func_jacobian(mu_S, mu_B, mu_hat_S, mu_hat_B, eps_S, eps_B, BATCH_SIZE)
             loss_jacobian = loss_func_jacobian
             loss_jacobian.backward()
-            train_loss += loss_jacobian.item()
-            losses['Jac'] += loss_jacobian.item()
+            train_loss += _getfloat(loss_jacobian)
+            losses['Jac'] += _getfloat(loss_jacobian)
             optimizer_jacobian.step()
             optimizer_jacobian.zero_grad()
             weight_add(1.0, model, model_jacobian)
@@ -283,7 +228,7 @@ def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jac
     return train_loss, losses
 
 
-def test(model,model_jacobian,model_temp,test_iterator,IsNeedSave=False):
+def test(model,model_jacobian,test_iterator,IsNeedSave=False):
     global generated_beta_list, generated_bonelength_list, task
     task = 'test'
     # set the evaluation mode
@@ -328,12 +273,12 @@ def test(model,model_jacobian,model_temp,test_iterator,IsNeedSave=False):
             
             loss_a, sublosses, L_covarpen = loss_func_basic
             
-            test_loss += loss_a.item()
+            test_loss += _getfloat(loss_a)
 
-            losses['KLD'] += sublosses['KLD'].item()
-            losses['RCL_bone'] += sublosses['RCL_bone'].item()
-            losses['RCL_x'] += sublosses['RCL_x'].item()
-            losses['Cov'] += L_covarpen.item()
+            losses['KLD'] += _getfloat(sublosses['KLD'])
+            losses['RCL_bone'] += _getfloat(sublosses['RCL_bone'])
+            losses['RCL_x'] += _getfloat(sublosses['RCL_x'])
+            losses['Cov'] += _getfloat(L_covarpen)
 
 
             shapeblendshape = shapeblendshape.to(device)
@@ -368,8 +313,8 @@ def test(model,model_jacobian,model_temp,test_iterator,IsNeedSave=False):
                 mu_hat_S, mu_hat_B, eps_S, eps_B = output
                 loss_func_jacobian = md.loss_func_jacobian(mu_S, mu_B, mu_hat_S, mu_hat_B, eps_S, eps_B, BATCH_SIZE)
                 loss_jacobian = loss_func_jacobian
-                test_loss += loss_jacobian.item()
-                losses['Jac'] += loss_jacobian.item()
+                test_loss += _getfloat(loss_jacobian)
+                losses['Jac'] += _getfloat(loss_jacobian)
             
     test_loss =  test_loss
     return test_loss, losses
@@ -390,12 +335,10 @@ def load_trained_model(model, model_jacobian, _dataset, _iterator):
 def save_trained_model(model, model_jacobian, model_temp,train_dataset, test_dataset, train_iterator, test_iterator, optimizer, optimizer_jacobian, scheduler, scheduler_jacobian):
     global e
     e = 0
-    best_test_loss = float('inf')
-    example_images = []
 
     for e in range(N_EPOCHS):
         train_loss, train_losses = train(model, model_jacobian, model_temp, train_iterator, optimizer, optimizer_jacobian)
-        test_loss, test_losses = test(model, model_jacobian, model_temp, test_iterator)
+        test_loss, test_losses = test(model, model_jacobian, test_iterator)
 
         train_loss /= len(train_dataset)
         test_loss /= len(test_dataset)
@@ -421,11 +364,14 @@ def save_trained_model(model, model_jacobian, model_temp,train_dataset, test_dat
 
         # if e > 1 and (e % 3 == 0):
         # https://tutorials.pytorch.kr/beginner/saving_loading_models.html
-        torch.save({
+        _path = PATH + '_' +str(e) + '.pt'
+        _save(torch.save,
+        args=({
             'epoch': N_EPOCHS,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
-        }, PATH + '_' +str(e) + '.pt')
+            },_path),
+        path=_path)
 
 
 def wrapper():
@@ -446,13 +392,13 @@ def transformation():
 def setup_trained_model():
     global PATH, generated_beta_list, config, TRAINED_TIME
 
+    root = "/Data/MGY/STAR-Private/outputs/weight/"
+
     if TRAINED_TIME is None:
         TRAINED_TIME = stm
-        # PATH = '/Data/MGY/STAR-Private/resources/cvae_' + TRAINED_TIME + '.pt'
-        PATH = '/Data/MGY/STAR-Private/resources/cvae_' + TRAINED_TIME
+        PATH = root + '/cvae_' + TRAINED_TIME
     else:
-        # PATH = '/Data/MGY/STAR-Private/resources/cvae_' + TRAINED_TIME + '.pt'
-        PATH = '/Data/MGY/STAR-Private/resources/cvae_' + TRAINED_TIME
+        PATH = root + '/cvae_' + TRAINED_TIME
 
     transform = transformation()
 
@@ -488,13 +434,6 @@ def setup_trained_model():
     model = DataParallel(model)
     model_jacobian = DataParallel(model_jacobian)
     model_temp = DataParallel(model_jacobian)
-    # else:
-    #     model = md.CVAE(BATCH_SIZE=BATCH_SIZE, device=device)
-    #     model_jacobian = md.CVAE(BATCH_SIZE=BATCH_SIZE, device=device, IsSupporter=True)
-    #     model_temp = md.CVAE(BATCH_SIZE=BATCH_SIZE, device=device, IsSupporter=True)
-    #     model.to(device)
-    #     model_jacobian.to(device)
-    #     model_temp.to(device)
 
     model.to(device)
     model_jacobian.to(device)

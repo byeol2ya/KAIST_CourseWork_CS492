@@ -1,3 +1,7 @@
+import os
+path = 'C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/tet1/tet3/'
+os.makedirs(path, exist_ok=True)
+
 import torch
 from torch.autograd import Variable
 
