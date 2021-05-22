@@ -315,24 +315,40 @@ def likelihood_loss(X_hat, X):
     euc_err = (X_hat - X).pow(2).mean(dim=-1)
     return euc_err.unsqueeze(0)
 
-def RMSE(y, pred_y):
-    eps = 1e-10
-    return  torch.sqrt(F.mse_loss(y,pred_y)+eps)
+def RCL_loss_2D(y, pred_y, reduction='sum'):
+    return  F.mse_loss(y,pred_y,reduction=reduction)
 
-def loss_wrapper(x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bonelength, beta, reconstructed_beta):
+def RCL_loss_3D(y, pred_y, reduction='sum'):
+    return  F.mse_loss(y,pred_y,reduction=reduction)
+    # ret = torch.pow(y - pred_y, 2)
+    # ret = torch.sum(ret,dim=2)
+    # # ret = torch.sqrt(ret)
+    # # ret = torch.pow(ret,2)
+    # return ret
+
+def get_RCL_x_euclidean_distance(x, pred_x):
+    ret = torch.pow(x - pred_x, 2)
+    ret = torch.sum(ret,dim=2)
+    ret = torch.sum(torch.sqrt(ret)) / 6890.0
+
+    return ret
+
+def loss_wrapper(x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bonelength, beta, reconstructed_beta, BATCH_SIZE):
     b_beta = 5.0
     regular = 1.0
     RCL_beta_weight = 0.25
     mean, log_var = z_mu, z_var
-    KLD = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
-    RCL_x = RMSE(x, reconstructed_x) * b_beta * regular
-    RCL_bone = RMSE(reconstructed_bonelength, bonelength) * regular
-    # RCL_beta = RMSE(reconstructed_beta, beta) * RCL_beta_weight
+    KLD = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp()) / float(BATCH_SIZE)
+    RCL_x = RCL_loss_3D(x, reconstructed_x, reduction='sum') / float(BATCH_SIZE)
+    RCL_x_euclidean_distance = get_RCL_x_euclidean_distance(x, reconstructed_x) / float(BATCH_SIZE)
+    RCL_bone = RCL_loss_2D(reconstructed_bonelength, bonelength, reduction='sum') / float(BATCH_SIZE)
+    # RCL_beta = RCL_loss_2D(reconstructed_beta, beta, reduction='sum') * RCL_beta_weight / float(BATCH_SIZE)
     RCL_beta = 0.0
     RCL_bone = 0.0
 
-    loss = KLD + RCL_bone + RCL_x + RCL_beta
-    return loss, {'KLD': KLD, 'RCL_bone': RCL_bone, 'RCL_x': RCL_x, 'RCL_beta': RCL_beta}
+    loss = KLD + RCL_bone * regular + RCL_x * b_beta * regular + RCL_beta
+    # return loss, {'KLD': KLD, 'RCL_bone': RCL_bone, 'RCL_x': RCL_x, 'RCL_beta': RCL_beta}
+    return loss, {'KLD': KLD, 'RCL_bone': RCL_bone, 'RCL_x': RCL_x, 'RCL_beta': RCL_beta, 'RCL_x_euclidean_distance': RCL_x_euclidean_distance}
 
 
 def loss_func_basic(
@@ -355,7 +371,8 @@ def loss_func_basic(
 ):
     L_base, term_set = loss_wrapper(x=X, reconstructed_x=X_hat, z_mu=mu_S, z_var=std_S, bonelength=bonelength,
                                     reconstructed_bonelength=generated_bonelength,
-                                    beta=beta, reconstructed_beta=generated_beta)
+                                    beta=beta, reconstructed_beta=generated_beta,
+                                    BATCH_SIZE=BATCH_SIZE)
 
     #### Covariance penalty for disentanglement ####
     # ----------------------------------------------#
@@ -385,7 +402,7 @@ def loss_func_basic(
     # Compute the inter-group penalty
     interPen = interTerm(C_hat_SB)
     # Final weighted penalty
-    L_covarpen = GAMMA * interPen + LAMBDA_INTRA_GROUP_OFF_DIAG * offDiagPen + LAMBDA_INTRA_GROUP_ON_DIAG * onDiagPen
+    # L_covarpen = GAMMA * interPen + LAMBDA_INTRA_GROUP_OFF_DIAG * offDiagPen + LAMBDA_INTRA_GROUP_ON_DIAG * onDiagPen
     L_covarpen = 0.0
 
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
@@ -403,7 +420,7 @@ def loss_func_jacobian(_mu_S, _mu_B, mu_hat_S, mu_hat_B, _eps_S, _eps_B, BATCH_S
         )
     #0.5 for B and S
     
-    loss /= (torch.numel(_mu_B) * torch.numel(_mu_S) * BATCH_SIZE) * 0.5
+    loss /= (BATCH_SIZE * 2.0)
 
     return loss * JACOBIAN_LOSS_WEIGHT
 

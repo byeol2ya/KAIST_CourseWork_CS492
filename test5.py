@@ -1,4 +1,12 @@
 import os
+path = '/Data/a/c/d.txt'
+temp = path.split(os.path.sep)
+tt = path[:3]
+dirpath = path[:-(len(temp[-1])+1)]
+for i in range(1,len(dirpath)):
+    dirpath = os.path.join(dirpath,temp[i])
+print(dirpath)
+
 path = 'C:/Users/TheOtherMotion/Documents/GitHub/STAR-Private/tet1/tet3/'
 os.makedirs(path, exist_ok=True)
 

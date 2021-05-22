@@ -16,3 +16,4 @@ demo/wandb/*
 *.pkl
 *.npz
 probtorch/*
+outputs/*
