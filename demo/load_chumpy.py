@@ -19,6 +19,7 @@
 # Code Developed by:
 # Ahmed A. A. Osman
 
+import os
 import sys
 sys.path.append('../')
 sys.path.append('../../')

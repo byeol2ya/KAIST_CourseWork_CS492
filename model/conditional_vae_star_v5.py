@@ -5,11 +5,12 @@ https://github.com/graviraja/pytorch-sample-codes/blob/master/conditional_vae.py
 #https://github.com/pytorch/pytorch/issues/9158
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-GPU_VISIBLE_NUM = os.environ["CUDA_VISIBLE_DEVICES"].count(',') + 1
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2"
 
 import sys
 import time
+import datetime
+import wandb
 import numpy as np
 
 import torch
@@ -17,51 +18,58 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch.optim.lr_scheduler
-import datetime
-
-from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
-
-import matplotlib.pyplot as plt
-sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
-from utils.datasets_v4 import StarBetaBoneLengthDataset, Normalize
-import modelprob4 as md
-
+from torch.utils.data import DataLoader
 #https://greeksharifa.github.io/references/2020/06/10/wandb-usage/
-import wandb
 from torch.nn.parallel.data_parallel import DataParallel
 
+sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
+from utils.datasets_v5 import StarBetaBoneLengthDataset, Normalize
+import model_v5 as md
+from demo.load_chumpy import extract_obj, save_as_obj
 
-from demo.load_chumpy import extract_obj
 
-tm = time.localtime()
-stm = time.strftime('%Y_%m_%d_%H_%M_%S', tm)
+class PathControllTower:
+    def __init__(self, root) -> None:
+        self.root = root + '/'
 
+    def get_train_data(self):
+        return self.root + 'train.npz'
+
+    def get_test_data(self):
+        return self.root + 'test.npz'
+
+    def get_validation_data(self):
+        return self.root + 'validation.npz'
+
+    def get_reference_data(self):
+        return self.root + 'reference.npz'
+
+####################################################################
+# Set up your default hyperparameters before wandb.init
+# so they get properly set in the sweep
+# last channel is always (hidden_dim, target_dim) not follow config.
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+e = 0
+task = 'train'
+####################################################################
+# ROOT = (os.path.dirname(os.path.realpath(__file__)))
+STARPATH = PathControllTower(root='./data/')
+SMPLPATH = PathControllTower(root='./datasmpl/')
+DATAPATH = SMPLPATH
+GPU_VISIBLE_NUM = os.environ["CUDA_VISIBLE_DEVICES"].count(',') + 1
 
-ROOT = (os.path.dirname(os.path.realpath(__file__)))
+# TIMEPATH = '2021_05_06_16_35_01'
+TIMEPATH = None
+tm = time.localtime()
+TRAINED_TIME = time.strftime('%Y_%m_%d_%H_%M_%S', tm)
+####################################################################
 TRAIN_SIZE = 2048
 TEST_SIZE = 512
 BATCH_SIZE = 32         # number of data points in each batch
 N_EPOCHS = 100           # times to run the model on complete data
-INPUT_DIM_MESH = 6890*3     # size of each input
-DIM_BONELENGTH = 23     # size of each input
-HIDDEN_DIM = 256        # hidden dimension
-LATENT_DIM = 50         # latent vector dimension
-N_CLASSES = 14          # number of classes in the data
-DATA_SIZE = -1
 lr = 1e-2               # learning rate
-TRAINED_TIME = None
-# TRAINED_TIME = '2021_05_06_16_35_01'
-
-PATH = None
-
-e = 0
-task = 'train'
-
-# Set up your default hyperparameters before wandb.init
-# so they get properly set in the sweep
-# last channel is always (hidden_dim, target_dim) not follow config.
+####################################################################
 
 def _save(func, args, path):
     os.makedirs(path, exist_ok=True)
@@ -104,10 +112,9 @@ def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jac
     optimizer_jacobian.zero_grad()
 
     #TODO:fix it -> parallel gpu 사용시 할당되는 .to(device)를 조절해야하므로 constant 참고값도 불러온다
-    for i, (beta, bonelength, shapeblendshape, mesh_shape_pos, jointregressor_matrix) in enumerate(train_iterator):
+    for i, (beta, shapeblendshape, mesh_shape_pos, jointregressor_matrix) in enumerate(train_iterator):
         print(i)
         beta = beta.to(device)
-        bonelength = bonelength.to(device)
         shapeblendshape = shapeblendshape.to(device)
         mesh_shape_pos = mesh_shape_pos.to(device)
         jointregressor_matrix = jointregressor_matrix.to(device)
@@ -116,8 +123,7 @@ def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jac
 
         # forward pass
         # loss
-        output = model(beta=beta, 
-                        bonelength=bonelength, 
+        output = model(beta=beta,
                         shapeblendshape=shapeblendshape, 
                         mesh_shape_pos=mesh_shape_pos, 
                         jointregressor_matrix=jointregressor_matrix)
@@ -160,8 +166,7 @@ def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jac
         jointregressor_matrix = jointregressor_matrix.to(device)
         z_Style = z_Style.to(device)
         bonelength_reduced = bonelength_reduced.to(device)
-        output = model_jacobian(beta=None, 
-                                bonelength=None, 
+        output = model_jacobian(beta=None,
                                 shapeblendshape=shapeblendshape, 
                                 mesh_shape_pos=mesh_shape_pos, 
                                 jointregressor_matrix=jointregressor_matrix,
@@ -178,8 +183,7 @@ def train(model,model_jacobian,model_temp,train_iterator,optimizer,optimizer_jac
             jointregressor_matrix = jointregressor_matrix.to(device)
             z_Style = z_Style.to(device)
             bonelength_reduced = bonelength_reduced.to(device)
-            output = model_jacobian(beta=None, 
-                                    bonelength=None, 
+            output = model_jacobian(beta=None,
                                     shapeblendshape=shapeblendshape, 
                                     mesh_shape_pos=mesh_shape_pos, 
                                     jointregressor_matrix=jointregressor_matrix,
@@ -217,21 +221,19 @@ def test(model,model_jacobian,test_iterator,IsNeedSave=False):
     # we don't need to track the gradients, since we are not updating the parameters during evaluation / testing
     with torch.no_grad():
         weight_interpolate(1.0, model_jacobian, model)
-        for i, (beta, bonelength, shapeblendshape, mesh_shape_pos, jointregressor_matrix) in enumerate(test_iterator):
+        for i, (beta, shapeblendshape, mesh_shape_pos, jointregressor_matrix) in enumerate(test_iterator):
             beta = beta.to(device)
-            bonelength = bonelength.to(device)
             shapeblendshape = shapeblendshape.to(device)
             mesh_shape_pos = mesh_shape_pos.to(device)
             jointregressor_matrix = jointregressor_matrix.to(device)
 
             
-            output = model(beta=beta, 
-                            # bonelength=bonelength, 
+            output = model(beta=beta,
                             shapeblendshape=shapeblendshape, 
                             mesh_shape_pos=mesh_shape_pos, 
                             jointregressor_matrix=jointregressor_matrix)
 
-            generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh, z_Style = output
+            generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh, z_Style, bonelength = output
 
             if i == 0 and IsNeedSave:
                 generated_beta_list += [[beta, generated_beta]]
@@ -262,7 +264,6 @@ def test(model,model_jacobian,test_iterator,IsNeedSave=False):
             z_Style = z_Style.to(device)
             bonelength_reduced = bonelength_reduced.to(device)
             output = model_jacobian(beta=None, 
-                                    bonelength=None, 
                                     shapeblendshape=shapeblendshape, 
                                     mesh_shape_pos=mesh_shape_pos, 
                                     jointregressor_matrix=jointregressor_matrix,
@@ -278,7 +279,6 @@ def test(model,model_jacobian,test_iterator,IsNeedSave=False):
                 z_Style = z_Style.to(device)
                 bonelength_reduced = bonelength_reduced.to(device)
                 output = model_jacobian(beta=None, 
-                                        bonelength=None, 
                                         shapeblendshape=shapeblendshape, 
                                         mesh_shape_pos=mesh_shape_pos, 
                                         jointregressor_matrix=jointregressor_matrix,
@@ -295,14 +295,14 @@ def test(model,model_jacobian,test_iterator,IsNeedSave=False):
     return test_loss, losses
 
 def load_trained_model(model, model_jacobian, _dataset, _iterator):
-    checkpoint = torch.load(PATH + '.pt')
+    checkpoint = torch.load(TIMEPATH + '.pt')
     model.load_state_dict(checkpoint['model_state_dict'])
     epoch = checkpoint['epoch']
 
     e = epoch
 
     test_loss, test_losses = test(model, model_jacobian, _iterator, IsNeedSave=True)
-
+    
     test_loss /= len(_dataset)
 
     print(f'Epoch {e}, The Loss: {test_loss:.4f}')
@@ -339,7 +339,7 @@ def save_trained_model(model, model_jacobian, model_temp,train_dataset, test_dat
 
         # if e > 1 and (e % 3 == 0):
         # https://tutorials.pytorch.kr/beginner/saving_loading_models.html
-        _path = PATH + '_' +str(e) + '.pt'
+        _path = TIMEPATH + '_' +str(e) + '.pt'
         _save(torch.save,
         args=({
             'epoch': N_EPOCHS,
@@ -350,7 +350,7 @@ def save_trained_model(model, model_jacobian, model_temp,train_dataset, test_dat
 
 
 def wrapper():
-    setup_trained_model()
+    return setup_trained_model()
 
 
 def transformation():
@@ -365,32 +365,34 @@ def transformation():
     return transform
 
 def setup_trained_model():
-    global PATH, generated_beta_list, config, TRAINED_TIME
+    global TIMEPATH, generated_beta_list, config, TRAINED_TIME
 
     root = "/Data/MGY/STAR-Private/outputs/weight/"
 
-    if TRAINED_TIME is None:
-        TRAINED_TIME = stm
-        PATH = root + '/cvae_' + TRAINED_TIME
+    if TIMEPATH is None:
+        TIMEPATH = root + '/cvae_' + TRAINED_TIME
     else:
-        PATH = root + '/cvae_' + TRAINED_TIME
+        TIMEPATH = root + '/cvae_' + TIMEPATH
 
     transform = transformation()
 
     train_dataset = StarBetaBoneLengthDataset(
-        path='./data/train.npz',
+        path_data=DATAPATH.get_train_data(),
+        path_reference=DATAPATH.get_reference_data(),
         transform=transform,
         debug=TRAIN_SIZE
     )
 
     test_dataset = StarBetaBoneLengthDataset(
-        path='./data/test.npz',
+        path_data=DATAPATH.get_test_data(),
+        path_reference=DATAPATH.get_reference_data(),
         transform=transform,
         debug=TEST_SIZE
     )
 
     validation_dataset = StarBetaBoneLengthDataset(
-        path='./data/validation.npz',
+        path_data=DATAPATH.get_validation_data(),
+        path_reference=DATAPATH.get_reference_data(),
         transform=transform,
         debug=TEST_SIZE
     )
@@ -421,7 +423,7 @@ def setup_trained_model():
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
     scheduler_jacobian = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
 
-    if not os.path.isfile(PATH):
+    if not os.path.isfile(TIMEPATH):
         #sort, dnn style, load data, input/loss, version
         wandb.init(project="STARVAE-7-with-Cov-Jac")
         wandb.watch(model)
@@ -431,11 +433,38 @@ def setup_trained_model():
 
     return model, train_iterator, test_iterator, validation_dataset
 
+#정확히는 마지막 loss 지나고 나서 구한것
+def get_obj(model, save_path, name, _beta, _iterator):
+    global BATCH_SIZE
+    beta = torch.zeros((BATCH_SIZE,_beta.shape[-1]),dtype=torch.float32,device=device)
+    temp = _beta.cpu().data.numpy()
+    for i in range(BATCH_SIZE):
+        beta[i,:] = temp
+    
+    for i, (_, shapeblendshape, mesh_shape_pos, jointregressor_matrix) in enumerate(_iterator):
+        beta = _beta.to(device)
+        shapeblendshape = shapeblendshape.to(device)
+        mesh_shape_pos = mesh_shape_pos.to(device)
+        jointregressor_matrix = jointregressor_matrix.to(device)
+
+        output = model(beta=beta,
+                        shapeblendshape=shapeblendshape, 
+                        mesh_shape_pos=mesh_shape_pos, 
+                        jointregressor_matrix=jointregressor_matrix)
+        
+        generated_beta, generated_bonelength, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh, z_Style, bonelength = output
+
+        save_as_obj(model=generated_mesh[0].cpu().data.numpy(),save_path=save_path,name=name)
+        break
+
+
+
+
 def main():
     global generated_beta_list, generated_bonelength_list
     generated_beta_list = []
     generated_bonelength_list = []
-    wrapper()
+    model, train_iterator, test_iterator, validation_dataset = wrapper()
 
     np.set_printoptions(precision=3, suppress=True)
     # for bone_pair in generated_bonelength_list:
@@ -456,8 +485,11 @@ def main():
     print(f'new:\n{new_val}')
     print(f'divide:\n{(abs(original_val) - abs(new_val))}')
     print(f'percent:\n{(abs(original_val) - abs(new_val))/abs(original_val) * 100.0}')
-    extract_obj(save_path="/Data/MGY/STAR-Private/outputs/",name=TRAINED_TIME+"_original",betas=original_val)
-    extract_obj(save_path="/Data/MGY/STAR-Private/outputs/",name=TRAINED_TIME+"_new",betas=new_val)
+    
+    get_obj(model=model,save_path="/Data/MGY/STAR-Private/outputs/",name=TRAINED_TIME+"_new",beta=original_val)
+    get_obj(model=model,save_path="/Data/MGY/STAR-Private/outputs/",name=TRAINED_TIME+"_new",beta=new_val)
+    # extract_obj(save_path="/Data/MGY/STAR-Private/outputs/",name=TRAINED_TIME+"_original",betas=original_val)
+    # extract_obj(save_path="/Data/MGY/STAR-Private/outputs/",name=TRAINED_TIME+"_new",betas=new_val)
 
 
 if __name__ == "__main__":
