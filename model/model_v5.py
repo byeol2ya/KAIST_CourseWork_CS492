@@ -342,9 +342,9 @@ def loss_wrapper(x, reconstructed_x, z_mu, z_var, bonelength, reconstructed_bone
     RCL_x = RCL_loss_3D(x, reconstructed_x, reduction='sum') / float(BATCH_SIZE)
     RCL_x_euclidean_distance = get_RCL_x_euclidean_distance(x, reconstructed_x) / float(BATCH_SIZE)
     RCL_bone = RCL_loss_2D(reconstructed_bonelength, bonelength, reduction='sum') / float(BATCH_SIZE)
-    # RCL_beta = RCL_loss_2D(reconstructed_beta, beta, reduction='sum') * RCL_beta_weight / float(BATCH_SIZE)
-    RCL_beta = 0.0
-    RCL_bone = 0.0
+    RCL_beta = RCL_loss_2D(reconstructed_beta, beta, reduction='sum') * RCL_beta_weight / float(BATCH_SIZE)
+    # RCL_beta = 0.0
+    # RCL_bone = 0.0
 
     loss = KLD + RCL_bone * regular + RCL_x * b_beta * regular + RCL_beta
     # return loss, {'KLD': KLD, 'RCL_bone': RCL_bone, 'RCL_x': RCL_x, 'RCL_beta': RCL_beta}
@@ -402,8 +402,8 @@ def loss_func_basic(
     # Compute the inter-group penalty
     interPen = interTerm(C_hat_SB)
     # Final weighted penalty
-    # L_covarpen = GAMMA * interPen + LAMBDA_INTRA_GROUP_OFF_DIAG * offDiagPen + LAMBDA_INTRA_GROUP_ON_DIAG * onDiagPen
-    L_covarpen = 0.0
+    L_covarpen = GAMMA * interPen + LAMBDA_INTRA_GROUP_OFF_DIAG * offDiagPen + LAMBDA_INTRA_GROUP_ON_DIAG * onDiagPen
+    # L_covarpen = 0.0
 
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
     # --- Finally compute the total loss sum ---#
