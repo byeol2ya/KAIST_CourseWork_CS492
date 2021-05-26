@@ -12,3 +12,4 @@ star.egg-info/PKG-INFO
 wandb/*
 resources/*
 demo/wandb/*
+probtorch/*
