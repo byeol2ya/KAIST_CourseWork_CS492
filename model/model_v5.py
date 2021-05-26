@@ -251,7 +251,7 @@ class CVAE(nn.Module):
     def calculate_bonelength_both_from_mesh(self, v_mesh):
         joints = torch.matmul(self.jointregressor_matrix, v_mesh)
         bone_length = self.calculate_bonelength_both(joints)  # 23
-        bone_length = bone_length - 0.373924 * 2.67173
+        bone_length = (bone_length - 0.373924) * 2.67173
 
         return bone_length
 
