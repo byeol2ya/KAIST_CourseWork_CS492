@@ -43,8 +43,12 @@ surf2 = pv.PolyData(vertices, faces)
 # plot each face with a different color
 #surf.plot(scalars=np.arange(3), cpos=[-1, 1, 0.5],opacity=0.5)
 p = pv.Plotter()
-p.add_mesh(surf, show_edges=True, color="blue",opacity=0.5)
+p.add_mesh(surf, show_edges=True, color="blue",opacity=0.1)
 p.add_mesh(surf2, show_edges=True, color="red",opacity=0.5)
+
+p.add_lines(lines=np.array([[0, 0, 1.5],[0, 0, -1.5]]),color='#FF0000')
+p.add_lines(lines=np.array([[0, 1.5, 0],[0, -1.5, 0]]),color='#5F0000')
+# p.add_points(points = np.array([[0, 0, 1.5]]))
 # p.add_light(light)
 p.add_slider_widget(create_mesh, [5, 100], title='Resolution')
 p.show(cpos="xy")
