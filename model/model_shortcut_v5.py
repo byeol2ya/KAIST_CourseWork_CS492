@@ -159,10 +159,11 @@ class Decoder(nn.Module):
 
 
 class CVAE(nn.Module):
-    def __init__(self, BATCH_SIZE, IsSupporter=False, IsA=True,
+    def __init__(self, BATCH_SIZE,IsNewBeta, IsSupporter=False, IsA=True,
                  NUM_ENCODER_STLYE=NUM_STYLE,
                  NUM_ENCODER_BONELENGTH=NUM_BONELENGTH,
-                 NUM_DECODER_ALL=NUM_DECODER):
+                 NUM_DECODER_ALL=NUM_DECODER,
+                 ):
         super().__init__()
         self.NUM_ENCODER_STLYE = NUM_ENCODER_STLYE
         self.NUM_ENCODER_BONELENGTH = NUM_ENCODER_BONELENGTH
@@ -173,6 +174,7 @@ class CVAE(nn.Module):
         self.decoder = Decoder(self.NUM_DECODER_ALL)
         self.IsSupporter = IsSupporter
         self.IsA = IsA
+        self.IsNewBeta = IsNewBeta
 
     def encode(self, mesh, bonelength):
         mesh_flatten = torch.flatten(mesh, start_dim=1)
@@ -182,31 +184,49 @@ class CVAE(nn.Module):
         bonelength_reduced = self.encoderBonelength(bonelength)
         return std_output, bonelength_reduced, mu_output
 
-    def forward_for_gui(self, _select_beta, _select_std_weight):
+    def forward_for_gui(self, _select_beta, _select_z, _select_bone):
         mesh = self.calculate_mesh(_select_beta)
 
+        print('\n\n\n\n\n\n')
         ##encode
         bonelength, real_bone_length, joints = self.calculate_bonelength_both_from_mesh(mesh)
-        std_Style, bonelength_reduced, mu_Style = self.encode(mesh, bonelength)
-        z = self.reparameterization(mu_Style, std_Style)
+        if self.IsNewBeta:
+            std_Style, bonelength_reduced, mu_Style = self.encode(mesh, bonelength)
+            z = self.reparameterization(mu_Style, std_Style)
+            generated_beta = self.decoder(bonelength_value=bonelength_reduced, style_z=z)
+            generated_mesh = self.calculate_mesh(generated_beta)
+            generated_bonelength, generated_real_bone_length, generated_joints = self.calculate_bonelength_both_from_mesh(
+                generated_mesh)
+            return generated_beta, generated_real_bone_length, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh, z, real_bone_length, joints, generated_joints
+
+        else:
+            print(f'bonelength before:\n{bonelength[0].cpu().data.numpy()}')
+            bonelength += _select_bone
+            print(f'bonelength after:\n{bonelength[0].cpu().data.numpy()}')
+            std_Style, bonelength_reduced, mu_Style = self.encode(mesh, bonelength)
+            z = self.reparameterization(mu_Style, std_Style)
+            print(f'z before:\n{z[0].cpu().data.numpy()}')
+            z = self.reparameterization(mu_Style, std_Style) + _select_z
+            print(f'z after:\n{z[0].cpu().data.numpy()}')
+            generated_beta = self.decoder(bonelength_value=bonelength_reduced, style_z=z)
+            generated_mesh = self.calculate_mesh(generated_beta)
+            generated_bonelength, generated_real_bone_length, generated_joints = self.calculate_bonelength_both_from_mesh(
+                generated_mesh)
+            return generated_beta, generated_real_bone_length, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh, z, real_bone_length, joints, generated_joints
 
         ##decode
-        generated_beta = self.decoder(bonelength_value=bonelength_reduced, style_z=z)
-        generated_mesh = self.calculate_mesh(generated_beta)
-        generated_bonelength, generated_real_bone_length, generated_joints = self.calculate_bonelength_both_from_mesh(generated_mesh)
-        return generated_beta, generated_real_bone_length, mu_Style, std_Style, bonelength_reduced, mesh, generated_mesh, z, real_bone_length, joints, generated_joints
 
     def forward(self,
                 beta,
                 shapeblendshape,
                 mesh_shape_pos,
                 jointregressor_matrix,
-                mu_S=None, mu_B=None, element_idx=None, _select_beta=None, _select_std_weight=None):
+                mu_S=None, mu_B=None, element_idx=None, _select_beta=None, _select_z=None, _select_bone=None):
         self.shapeblendshape = shapeblendshape
         self.mesh_shape_pos = mesh_shape_pos
         self.jointregressor_matrix = jointregressor_matrix
         if self.IsSupporter is False:
-            return self.forward_for_gui(_select_beta, _select_std_weight)
+            return self.forward_for_gui(_select_beta, _select_z, _select_bone)
         else:
             self.element_idx = element_idx
             if element_idx >= 0:

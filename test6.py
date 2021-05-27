@@ -1,13 +1,17 @@
-from pyvista import examples
-import pyvista as pv
-import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap
 import numpy as np
 import pyvista as pv
-sphere = pv.Sphere()
-sphere['Data'] = sphere.points[:, 2]
-plotter = pv.Plotter()
-_ = plotter.add_mesh(sphere, show_scalar_bar=False)
-_ = plotter.add_scalar_bar('Data', interactive=True, vertical=False,
-                           outline=True, fmt='%10.5f')
-plotter.show(cpos="xy")
+vertices = np.array([[0, 0, 0],
+                     [1, 0, 0],
+                     [1, 1, 0],
+                     [0, 1, 0],
+                     [0.5, 0.5, -1]])
+
+# mesh faces
+faces = np.hstack([[4, 0, 1, 2, 3],  # square
+                   [3, 0, 1, 4],     # triangle
+                   [3, 1, 2, 4]])    # triangle
+
+surf = pv.PolyData(vertices, faces)
+
+# plot each face with a different color
+surf.plot(scalars=np.arange(3), cpos=[-1, 1, 0.5])
